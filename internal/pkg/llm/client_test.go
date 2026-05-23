@@ -1,0 +1,414 @@
+package llm
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+)
+
+type labelPair = dto.LabelPair
+
+// sampleChatResponse returns a minimal, well-formed OpenAI-style chat
+// completion response body.
+func sampleChatResponse(content string, toolCalls []map[string]any) []byte {
+	msg := map[string]any{
+		"role":    "assistant",
+		"content": content,
+	}
+	if len(toolCalls) > 0 {
+		msg["tool_calls"] = toolCalls
+	}
+	body := map[string]any{
+		"id":      "chatcmpl-test",
+		"object":  "chat.completion",
+		"created": 1234567890,
+		"model":   "gpt-4o",
+		"choices": []map[string]any{
+			{
+				"index":         0,
+				"message":       msg,
+				"finish_reason": "stop",
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     42,
+			"completion_tokens": 8,
+			"total_tokens":      50,
+		},
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}
+
+// fakeServer returns an httptest.Server that handles POST /chat/completions
+// using handler, plus a Config pointed at it.
+func fakeServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, Config) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/chat/completions", handler)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, Config{
+		APIKey:  "test-key",
+		Model:   "gpt-4o",
+		BaseURL: srv.URL,
+		Timeout: 2 * time.Second,
+	}
+}
+
+// newTestClient builds an openai-backed client with a fresh registry so
+// parallel tests don't collide on collector registration.
+func newTestClient(t *testing.T, cfg Config, budget BudgetChecker) Client {
+	t.Helper()
+	reg := prometheus.NewRegistry()
+	return New(cfg, budget, reg)
+}
+
+// TestChatRoundTrip round-trips a basic chat completion and asserts the
+// request body carries the expected OpenAI shape.
+func TestChatRoundTrip(t *testing.T) {
+	var (
+		gotModel    string
+		gotMsgCount int
+		gotToolLen  int
+	)
+	_, cfg := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("auth header = %q, want Bearer test-key", got)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		var body struct {
+			Model    string           `json:"model"`
+			Messages []map[string]any `json:"messages"`
+			Tools    []map[string]any `json:"tools"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("unmarshal request: %v", err)
+		}
+		gotModel = body.Model
+		gotMsgCount = len(body.Messages)
+		gotToolLen = len(body.Tools)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(sampleChatResponse("hello back", nil))
+	})
+
+	client := newTestClient(t, cfg, nil)
+	resp, err := client.Chat(context.Background(), ChatReq{
+		Messages: []Message{
+			{Role: "system", Content: "you are helpful"},
+			{Role: "user", Content: "hi"},
+		},
+		Tools: []ToolSchema{
+			{
+				Name:        "ping",
+				Description: "returns pong",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+
+	if gotModel != "gpt-4o" {
+		t.Errorf("request model = %q, want gpt-4o", gotModel)
+	}
+	if gotMsgCount != 2 {
+		t.Errorf("request messages len = %d, want 2", gotMsgCount)
+	}
+	if gotToolLen != 1 {
+		t.Errorf("request tools len = %d, want 1", gotToolLen)
+	}
+	if resp.Assistant.Role != "assistant" {
+		t.Errorf("assistant role = %q, want assistant", resp.Assistant.Role)
+	}
+	if resp.Assistant.Content != "hello back" {
+		t.Errorf("assistant content = %q", resp.Assistant.Content)
+	}
+	if resp.Usage.TotalTokens != 50 {
+		t.Errorf("total tokens = %d, want 50", resp.Usage.TotalTokens)
+	}
+}
+
+// TestChatToolCallDecoded verifies that a server response with tool_calls
+// lands in ChatResp.Assistant.ToolCalls with args preserved verbatim.
+func TestChatToolCallDecoded(t *testing.T) {
+	_, cfg := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(sampleChatResponse("", []map[string]any{
+			{
+				"id":   "call_123",
+				"type": "function",
+				"function": map[string]any{
+					"name":      "get_host_load",
+					"arguments": `{"host":"node-01"}`,
+				},
+			},
+		}))
+	})
+
+	client := newTestClient(t, cfg, nil)
+	resp, err := client.Chat(context.Background(), ChatReq{
+		Messages: []Message{{Role: "user", Content: "why slow?"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(resp.Assistant.ToolCalls) != 1 {
+		t.Fatalf("tool calls len = %d, want 1", len(resp.Assistant.ToolCalls))
+	}
+	tc := resp.Assistant.ToolCalls[0]
+	if tc.ID != "call_123" {
+		t.Errorf("tool call ID = %q, want call_123", tc.ID)
+	}
+	if tc.Name != "get_host_load" {
+		t.Errorf("tool call Name = %q", tc.Name)
+	}
+	var args map[string]string
+	if err := json.Unmarshal(tc.Args, &args); err != nil {
+		t.Fatalf("tool call args unmarshal: %v", err)
+	}
+	if args["host"] != "node-01" {
+		t.Errorf("args host = %q, want node-01", args["host"])
+	}
+}
+
+// TestChatServer429 — the upstream returns 429; Chat surfaces an error and
+// the error counter increments.
+func TestChatServer429(t *testing.T) {
+	_, cfg := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"rate limited","type":"rate_limit"}}`))
+	})
+
+	reg := prometheus.NewRegistry()
+	budget := &countingBudget{}
+	client := New(cfg, budget, reg)
+
+	_, err := client.Chat(context.Background(), ChatReq{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if got := counterValue(t, reg, "ongrid_llm_requests_total", "gpt-4o", "error"); got < 1 {
+		t.Errorf("error counter = %v, want >= 1", got)
+	}
+	if budget.recordCalls != 0 {
+		t.Errorf("budget.Record called %d times on error path; want 0", budget.recordCalls)
+	}
+}
+
+// TestChatBudgetShortCircuits — a budget that rejects the call prevents any
+// network roundtrip and increments the budget_exceeded counter.
+func TestChatBudgetShortCircuits(t *testing.T) {
+	hit := false
+	_, cfg := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	reg := prometheus.NewRegistry()
+	budget := &countingBudget{checkErr: ErrBudgetExceeded}
+	client := New(cfg, budget, reg)
+
+	_, err := client.Chat(context.Background(), ChatReq{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+		UserID:   7,
+	})
+	if !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("err = %v, want ErrBudgetExceeded", err)
+	}
+	if hit {
+		t.Errorf("server was called; budget should have short-circuited")
+	}
+	if budget.checkCalls != 1 {
+		t.Errorf("budget.Check calls = %d, want 1", budget.checkCalls)
+	}
+	if budget.recordCalls != 0 {
+		t.Errorf("budget.Record called %d times; want 0 on budget reject", budget.recordCalls)
+	}
+	if got := counterValue(t, reg, "ongrid_llm_requests_total", "gpt-4o", "budget_exceeded"); got != 1 {
+		t.Errorf("budget_exceeded counter = %v, want 1", got)
+	}
+}
+
+// TestNoopClientReturnsErrNoAPIKey — with an empty APIKey, New returns a
+// noop client that never hits the network.
+func TestNoopClientReturnsErrNoAPIKey(t *testing.T) {
+	client := New(Config{APIKey: "", Model: "gpt-4o"}, nil, prometheus.NewRegistry())
+	_, err := client.Chat(context.Background(), ChatReq{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, ErrNoAPIKey) {
+		t.Fatalf("err = %v, want ErrNoAPIKey", err)
+	}
+}
+
+// TestChatSuccessRecordsBudget — a successful call records actual usage.
+func TestChatSuccessRecordsBudget(t *testing.T) {
+	_, cfg := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(sampleChatResponse("ok", nil))
+	})
+
+	budget := &countingBudget{}
+	client := New(cfg, budget, prometheus.NewRegistry())
+
+	_, err := client.Chat(context.Background(), ChatReq{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if budget.recordCalls != 1 {
+		t.Errorf("budget.Record calls = %d, want 1", budget.recordCalls)
+	}
+	if budget.lastUsage.TotalTokens != 50 {
+		t.Errorf("recorded total tokens = %d, want 50", budget.lastUsage.TotalTokens)
+	}
+}
+
+// TestTemperatureDefault — if req.Temperature is 0, we send 0.1 upstream.
+func TestTemperatureDefault(t *testing.T) {
+	var gotTemp float32
+	_, cfg := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body struct {
+			Temperature float32 `json:"temperature"`
+		}
+		_ = json.Unmarshal(raw, &body)
+		gotTemp = body.Temperature
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(sampleChatResponse("ok", nil))
+	})
+	client := newTestClient(t, cfg, nil)
+	_, err := client.Chat(context.Background(), ChatReq{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if gotTemp < 0.09 || gotTemp > 0.11 {
+		t.Errorf("temperature = %v, want ~0.1", gotTemp)
+	}
+}
+
+// TestToolResultMessageRoundTrip — a role=tool message carries ToolCallID.
+func TestToolResultMessageRoundTrip(t *testing.T) {
+	var gotToolCallID string
+	_, cfg := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body struct {
+			Messages []struct {
+				Role       string `json:"role"`
+				ToolCallID string `json:"tool_call_id"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(raw, &body)
+		for _, m := range body.Messages {
+			if m.Role == "tool" {
+				gotToolCallID = m.ToolCallID
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(sampleChatResponse("done", nil))
+	})
+	client := newTestClient(t, cfg, nil)
+	_, err := client.Chat(context.Background(), ChatReq{
+		Messages: []Message{
+			{Role: "user", Content: "run ping"},
+			{Role: "tool", ToolCallID: "call_xyz", ToolName: "ping", Content: `{"ok":true}`},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if gotToolCallID != "call_xyz" {
+		t.Errorf("tool_call_id = %q, want call_xyz", gotToolCallID)
+	}
+}
+
+// --- test helpers ---
+
+type countingBudget struct {
+	checkCalls  int
+	recordCalls int
+	checkErr    error
+	lastUsage   Usage
+}
+
+func (b *countingBudget) Check(ctx context.Context, userID uint64, estPromptTokens int) error {
+	b.checkCalls++
+	return b.checkErr
+}
+
+func (b *countingBudget) Record(ctx context.Context, userID uint64, usage Usage) error {
+	b.recordCalls++
+	b.lastUsage = usage
+	return nil
+}
+
+// counterValue reads a specific label combination out of a CounterVec by
+// grabbing all metric families from the registry and matching name+labels.
+func counterValue(t *testing.T, reg *prometheus.Registry, name string, labels ...string) float64 {
+	t.Helper()
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			if matchLabels(m.GetLabel(), labels) {
+				return m.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+func matchLabels(got []*labelPair, want []string) bool {
+	// want is a flat slice of label values, in the order the vec declares
+	// them. We ignore names and just match values in order.
+	if len(got) != len(want) {
+		return false
+	}
+	// Build value set in label name order. The Prom client returns labels
+	// sorted alphabetically by name; we sort `want` by the known vec order
+	// in the caller — here we just join and compare.
+	vals := make([]string, 0, len(got))
+	for _, p := range got {
+		vals = append(vals, p.GetValue())
+	}
+	return strings.Join(sortedCopy(vals), "|") == strings.Join(sortedCopy(want), "|")
+}
+
+func sortedCopy(in []string) []string {
+	out := make([]string, len(in))
+	copy(out, in)
+	// insertion sort — small N.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j-1] > out[j]; j-- {
+			out[j-1], out[j] = out[j], out[j-1]
+		}
+	}
+	return out
+}

@@ -1,0 +1,366 @@
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Cloud, Cpu, Wrench, RefreshCw, Play, Search } from 'lucide-react';
+import { cn } from '@/lib/cn';
+import { listSkills, localizedSkill, type SkillClass, type SkillScope, type SkillSummary } from '@/api/skills';
+import { ApiError } from '@/api/client';
+import { useI18n } from '@/i18n/locale';
+
+// Lazy-load the install/uninstall surface so the default Catalog tab
+// doesn't pull in the marketplace bundle until the operator actually
+// switches tabs.
+const InstallTab = lazy(() => import('@/pages/settings/Marketplace'));
+
+type ScopeFilter = '' | SkillScope;
+type Tab = 'catalog' | 'install';
+
+export default function SkillsPage() {
+  const { tr } = useI18n();
+  // Tab is URL-driven. The Install tab has no visible toggle today
+  // (see comment below), but `/skills?tab=install` still resolves to
+  // the install surface for power-user / dev use.
+  const [searchParams] = useSearchParams();
+  const tab: Tab = searchParams.get('tab') === 'install' ? 'install' : 'catalog';
+
+  // Install tab is hidden from the visible nav (2026-05-19): no public
+  // AIOps skill ecosystem exists, coding-agent catalogs are domain-
+  // mismatched, and external skills without matching BaseTools just
+  // give the LLM aspirational docs. The install surface is still
+  // reachable via /skills?tab=install for power users / dev verification,
+  // and all backend (/v1/marketplace/*, three container-kind detectors,
+  // builtin-preserving Reload) stays intact so flipping the flag back
+  // to surfaced is a one-line UI change.
+  if (tab === 'install') {
+    return (
+      <main className="anim-fade flex flex-1 flex-col overflow-hidden">
+        <Suspense fallback={<div className="flex h-40 items-center justify-center text-sm text-zinc-500">{tr('加载中…', 'Loading…')}</div>}>
+          <InstallTab />
+        </Suspense>
+      </main>
+    );
+  }
+  return (
+    <main className="anim-fade flex flex-1 flex-col overflow-hidden">
+      <CatalogTab />
+    </main>
+  );
+}
+
+function CatalogTab() {
+  const { tr } = useI18n();
+  const [items, setItems] = useState<SkillSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<string>('');
+  const [scope, setScope] = useState<ScopeFilter>('');
+
+  const fetchSkills = useCallback(async (silent = false) => {
+    if (silent) setRefreshing(true);
+    else setLoading(true);
+    try {
+      const r = await listSkills();
+      setItems((r.items ?? []).map(localizedSkill));
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSkills();
+  }, [fetchSkills]);
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of items) {
+      if (s.category) set.add(s.category);
+    }
+    return Array.from(set).sort();
+  }, [items]);
+
+  // Scope defaults to 'host' on the backend when omitted (skillcore.EffectiveScope),
+  // so for filter purposes we treat undefined as 'host'.
+  const effectiveScope = (s: SkillSummary): SkillScope => s.scope ?? 'host';
+
+  const counts = useMemo(() => {
+    let edge = 0;
+    let manager = 0;
+    for (const s of items) {
+      if (effectiveScope(s) === 'manager') manager++;
+      else edge++;
+    }
+    return { edge, manager, total: items.length };
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return items.filter((s) => {
+      if (category && s.category !== category) return false;
+      if (scope && effectiveScope(s) !== scope) return false;
+      if (!q) return true;
+      return (
+        s.name.toLowerCase().includes(q) ||
+        s.key.toLowerCase().includes(q) ||
+        (s.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [items, query, category, scope]);
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+        <header className="app-header border-b border-zinc-800 px-6 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-base font-semibold text-zinc-100">{tr('已加载技能', 'Loaded skills')}</h1>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                {tr(
+                  `LLM 当前可见的能力 · 共 ${items.length} 个，已匹配 ${filtered.length}`,
+                  `Capabilities the LLM can see · ${items.length} total, ${filtered.length} matched`,
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => fetchSkills(true)}
+              disabled={loading || refreshing}
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+            >
+              <RefreshCw size={12} className={cn(refreshing && 'animate-spin')} />
+              {tr('刷新', 'Refresh')}
+            </button>
+          </div>
+        </header>
+
+        <div className="border-b border-zinc-800 px-6 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="relative block w-64">
+              <span className="sr-only">{tr('搜索', 'Search')}</span>
+              <Search size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={tr('搜索 name / key / description', 'Search name / key / description')}
+                className="w-full rounded-md border border-zinc-800 bg-zinc-950/40 py-1.5 pl-8 pr-2 text-xs text-zinc-200 placeholder:text-zinc-500 focus:border-zinc-700 focus:outline-none"
+              />
+            </label>
+            <div className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
+              <span className="text-zinc-500">{tr('运行位置', 'Runs on')}</span>
+              <div className="flex flex-wrap gap-1">
+                <CategoryChip
+                  active={scope === ''}
+                  label={`${tr('全部', 'All')} ${counts.total}`}
+                  onClick={() => setScope('')}
+                />
+                <CategoryChip
+                  active={scope === 'host'}
+                  label={`🖥️ ${tr('设备端', 'Device')} ${counts.edge}`}
+                  onClick={() => setScope('host')}
+                />
+                <CategoryChip
+                  active={scope === 'manager'}
+                  label={`☁️ ${tr('云端', 'Cloud')} ${counts.manager}`}
+                  onClick={() => setScope('manager')}
+                />
+              </div>
+            </div>
+            {categories.length > 0 && (
+              <div className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
+                <span className="text-zinc-500">{tr('分类', 'Category')}</span>
+                <div className="flex flex-wrap gap-1">
+                  <CategoryChip
+                    active={category === ''}
+                    label={tr('全部', 'All')}
+                    onClick={() => setCategory('')}
+                  />
+                  {categories.map((c) => (
+                    <CategoryChip
+                      key={c}
+                      active={category === c}
+                      label={c}
+                      onClick={() => setCategory(c)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-6">
+          {err && (
+            <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/5 px-4 py-3 text-sm text-red-300">
+              {tr('加载失败：', 'Load failed: ')}{err}
+            </div>
+          )}
+          {loading ? (
+            <div className="flex h-40 items-center justify-center text-sm text-zinc-500">{tr('加载中…', 'Loading…')}</div>
+          ) : filtered.length === 0 ? (
+            <EmptyState hasItems={items.length > 0} />
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-zinc-800/60 bg-zinc-900/30">
+              <table className="w-full text-sm">
+                <thead className="border-b border-zinc-800/60 bg-zinc-950/40 text-[11px] uppercase tracking-wider text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left">{tr('名称', 'Name')}</th>
+                    <th className="px-4 py-2.5 text-left">{tr('运行位置', 'Runs on')}</th>
+                    <th className="px-4 py-2.5 text-left">{tr('类别', 'Class')}</th>
+                    <th className="px-4 py-2.5 text-left">{tr('分类', 'Category')}</th>
+                    <th className="px-4 py-2.5 text-left">{tr('描述', 'Description')}</th>
+                    <th className="px-4 py-2.5 text-right">{tr('操作', 'Actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/40">
+                  {filtered.map((skill) => (
+                    <SkillRow key={skill.key} skill={skill} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+  );
+}
+
+function CategoryChip({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick(): void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'rounded-md border px-2 py-0.5 text-[11px] transition-colors',
+        active
+          ? 'border-zinc-600 bg-zinc-800 text-zinc-100'
+          : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+function SkillRow({ skill }: { skill: SkillSummary }) {
+  const { tr } = useI18n();
+  return (
+    <tr className="transition-colors hover:bg-zinc-900/40">
+      <td className="whitespace-nowrap px-4 py-2.5">
+        <div className="font-medium text-zinc-100">{skill.name}</div>
+        <div className="mt-0.5 font-mono text-[11px] text-zinc-500" title={skill.key}>
+          {skill.key}
+        </div>
+      </td>
+      <td className="whitespace-nowrap px-4 py-2.5">
+        <ScopeBadge value={skill.scope ?? 'host'} />
+      </td>
+      <td className="whitespace-nowrap px-4 py-2.5">
+        <ClassBadge value={skill.class} />
+      </td>
+      <td className="whitespace-nowrap px-4 py-2.5">
+        {skill.category ? (
+          <span className="rounded-md border border-zinc-800 bg-zinc-950/40 px-1.5 py-0.5 text-[10px] text-zinc-400">
+            {skill.category}
+          </span>
+        ) : (
+          <span className="text-zinc-600">—</span>
+        )}
+      </td>
+      {/* Description column is the truncate-absorber — w-full + max-w-0
+          forces it to take all remaining horizontal space and clamp
+          long copy, so identity columns (name / key / badges) never
+          shrink below their natural width. */}
+      <td className="w-full max-w-0 px-4 py-2.5 text-xs text-zinc-400">
+        <div className="line-clamp-2">{skill.description || '—'}</div>
+      </td>
+      <td className="whitespace-nowrap px-4 py-2.5 text-right">
+        {skill.inventory_only ? (
+          <span
+            title={tr(
+              '此能力主要由 AI 助手在 chat 中调用，参数 schema 太复杂没法手动填表',
+              'Mainly invoked by the AI assistant in chat — schema too complex for a manual form',
+            )}
+            className="text-[11px] text-zinc-500"
+          >
+            {tr('仅 AI 调用', 'AI only')}
+          </span>
+        ) : (
+          <Link
+            to={`/skills/${encodeURIComponent(skill.key)}`}
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800"
+          >
+            <Play size={11} /> {tr('执行', 'Run')}
+          </Link>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// ScopeBadge tells the user where this skill physically runs. "host"
+// means a tunnel RPC into the device agent (probe_*, tail_file, etc);
+// "manager" means in-process on the cloud side (web_search). The same
+// info gates the Run page form (manager skills hide the device picker).
+export function ScopeBadge({ value }: { value: SkillScope }) {
+  const { tr } = useI18n();
+  const isHost = value === 'host';
+  return (
+    <span
+      title={isHost
+        ? tr('在设备上执行（需要选择设备）', 'Runs on the device (requires device selection)')
+        : tr('在云端执行（无需设备）', 'Runs on the cloud (no device required)')}
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+        isHost
+          ? 'bg-sky-500/10 text-sky-300 ring-sky-500/30'
+          : 'bg-violet-500/10 text-violet-300 ring-violet-500/30',
+      )}
+    >
+      {isHost ? <Cpu size={10} /> : <Cloud size={10} />}
+      {isHost ? tr('设备端', 'Device') : tr('云端', 'Cloud')}
+    </span>
+  );
+}
+
+export function ClassBadge({ value }: { value: SkillClass }) {
+  const styles: Record<SkillClass, string> = {
+    safe: 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/30',
+    mutating: 'bg-amber-500/10 text-amber-300 ring-amber-500/30',
+    dangerous: 'bg-red-500/15 text-red-300 ring-red-500/40',
+  };
+  return (
+    <span
+      className={cn(
+        'rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+        styles[value],
+      )}
+    >
+      {value}
+    </span>
+  );
+}
+
+function EmptyState({ hasItems }: { hasItems: boolean }) {
+  const { tr } = useI18n();
+  return (
+    <div className="flex h-60 flex-col items-center justify-center gap-2 text-zinc-500">
+      <Wrench size={28} className="text-zinc-600" />
+      <div className="text-sm">{hasItems ? tr('没有匹配的技能', 'No matching skills') : tr('还没有 skill 注册', 'No skills registered yet')}</div>
+      <div className="text-[11px] text-zinc-600">
+        {hasItems ? tr('换个关键字或清除分类筛选', 'Try a different keyword or clear filters') : tr('设备注册自己的 capability 后会出现在这里', 'Skills appear here once a device registers its capabilities')}
+      </div>
+    </div>
+  );
+}
