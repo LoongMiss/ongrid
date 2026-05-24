@@ -126,11 +126,12 @@ type GrafanaConfig struct {
 // client.
 type NotificationConfig struct {
 	// Enabled gates all outbound notification sends.
-	// env: ONGRID_NOTIFY_ENABLED; default false.
+	// env: ONGRID_NOTIFY_ENABLED; default true (configured channels deliver
+	// out of the box; set false to mute all notifications).
 	Enabled bool
 	// DefaultChannels is the ordered channel name list used when a caller
 	// does not specify explicit destinations.
-	// env: ONGRID_NOTIFY_DEFAULT_CHANNELS; comma-separated; default "log".
+	// env: ONGRID_NOTIFY_DEFAULT_CHANNELS; comma-separated; default empty.
 	DefaultChannels []string
 	// Timeout is the per-channel send timeout.
 	// env: ONGRID_NOTIFY_TIMEOUT; default 10s.
@@ -414,7 +415,12 @@ func Load() (*Config, error) {
 	c.Grafana.BootstrapPassword = getEnv("ONGRID_GRAFANA_BOOTSTRAP_PASSWORD", "")
 	c.Grafana.TLSInsecure = getEnvBool("ONGRID_GRAFANA_TLS_INSECURE", false)
 
-	c.Notification.Enabled = getEnvBool("ONGRID_NOTIFY_ENABLED", false)
+	// Default ON: notifications are allowed out of the box, so any channel
+	// the operator configures (UI or env) delivers without flipping a
+	// master switch. Per-channel env enables (Slack/Feishu/... below) stay
+	// OFF by default on purpose — seeding an enabled-but-URL-less channel
+	// would clutter the UI; UI-created channels carry their own enabled flag.
+	c.Notification.Enabled = getEnvBool("ONGRID_NOTIFY_ENABLED", true)
 	// Default channels list defaults empty — operators can pin specific
 	// channel names per env if desired. The legacy "log" entry was
 	// removed alongside the log channel type.

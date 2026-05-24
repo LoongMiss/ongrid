@@ -95,8 +95,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Prom.QueryURL != "" {
 		t.Errorf("Prom.QueryURL default = %q, want empty", cfg.Prom.QueryURL)
 	}
-	if cfg.Notification.Enabled {
-		t.Errorf("Notification.Enabled default = true, want false")
+	if !cfg.Notification.Enabled {
+		t.Errorf("Notification.Enabled default = false, want true (notifications allowed by default; configured channels deliver)")
 	}
 	if cfg.Notification.Timeout != 10*time.Second {
 		t.Errorf("Notification.Timeout default = %v, want 10s", cfg.Notification.Timeout)
