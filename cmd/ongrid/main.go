@@ -658,7 +658,8 @@ func main() {
 			Models:  cfg.LLM.Kimi.Models,
 		},
 	}
-	llmRouter.SetProvidersResolver(managerbizsetting.NewLLMSettingsResolver(settingSvc, llmEnvDefaults, cfg.LLM.Default))
+	llmSettingsResolver := managerbizsetting.NewLLMSettingsResolver(settingSvc, llmEnvDefaults, cfg.LLM.Default)
+	llmRouter.SetProvidersResolver(llmSettingsResolver)
 
 	// All downstream agent/investigator wiring takes the router so a
 	// per-request Provider override flows through; absent that, behaviour
@@ -1201,7 +1202,7 @@ func main() {
 		chatRT *aiopschatruntime.Runtime
 	)
 	if kernel == managersvcaiops.KernelGraph {
-		rt, rterr := buildAIOpsRuntime(rootCtx, cfg, llmClient, llmRouter, toolsReg, aiopsRepo, fbClient, edgeUC, deviceUC, reg, log, bootstrapSkillReg, bootstrapAgentReg)
+		rt, rterr := buildAIOpsRuntime(rootCtx, cfg, llmClient, llmRouter, toolsReg, aiopsRepo, fbClient, edgeUC, deviceUC, reg, log, bootstrapSkillReg, bootstrapAgentReg, llmSettingsResolver)
 		if rterr != nil {
 			log.Warn("aiops runtime build failed — falling back to legacy kernel", slog.Any("err", rterr))
 			kernel = managersvcaiops.KernelLegacy
@@ -2296,6 +2297,7 @@ func buildAIOpsRuntime(
 	log *slog.Logger,
 	skillReg *aiopschatruntime.SkillRegistry,
 	agentReg *aiopschatruntime.AgentRegistry,
+	resolver *managerbizsetting.LLMSettingsResolver,
 ) (*aiopschatruntime.Runtime, error) {
 	// 1. RoutingChatModel — one inner per provider that exists. We
 	//    layer providerInjectingClient around the existing
@@ -2316,22 +2318,46 @@ func buildAIOpsRuntime(
 		}
 		innerModels[provider] = m
 	}
-	if cfg.OpenAI.APIKey != "" {
-		addInner(llm.ProviderOpenAI, firstNonEmpty(cfg.OpenAI.Model, "gpt-4o"))
+	// Build inners from the RESOLVED provider set (env + Settings-UI/DB),
+	// the same source the SPA model picker uses. Previously this gated on
+	// boot-time env keys only — so a provider configured via the UI (e.g.
+	// anthropic, with its key in the DB and an empty env var) showed in the
+	// picker but had no inner ChatModel, and picking it failed with
+	// "unknown provider". The per-call key is resolved by the
+	// resolver-backed llmClient, so registering the inner is all that's
+	// needed. defProv comes from the resolved default (DB default_provider).
+	defProv := cfg.LLM.Default
+	if resolver != nil {
+		if provCfgs, resolvedDefault, rerr := resolver.ResolveProviders(ctx); rerr == nil {
+			for _, pc := range provCfgs {
+				addInner(pc.ID, pc.Model)
+			}
+			if resolvedDefault != "" {
+				defProv = resolvedDefault
+			}
+		} else {
+			log.Warn("chatruntime: resolve providers for inner models", slog.Any("err", rerr))
+		}
 	}
-	if cfg.LLM.Anthropic.APIKey != "" {
-		addInner(llm.ProviderAnthropic, firstNonEmpty(cfg.LLM.Anthropic.Model, "claude-3-5-sonnet-latest"))
-	}
-	if cfg.LLM.Zhipu.APIKey != "" {
-		addInner(llm.ProviderZhipu, firstNonEmpty(cfg.LLM.Zhipu.Model, "glm-4-plus"))
-	}
-	if cfg.LLM.Gemini.APIKey != "" {
-		addInner(llm.ProviderGemini, firstNonEmpty(cfg.LLM.Gemini.Model, "gemini-1.5-pro"))
+	// Safety net: if the resolver gave nothing (error / no rows), fall back
+	// to the boot-time env-keyed providers so the kernel still wires.
+	if len(innerModels) == 0 {
+		if cfg.OpenAI.APIKey != "" {
+			addInner(llm.ProviderOpenAI, firstNonEmpty(cfg.OpenAI.Model, "gpt-4o"))
+		}
+		if cfg.LLM.Anthropic.APIKey != "" {
+			addInner(llm.ProviderAnthropic, firstNonEmpty(cfg.LLM.Anthropic.Model, "claude-3-5-sonnet-latest"))
+		}
+		if cfg.LLM.Zhipu.APIKey != "" {
+			addInner(llm.ProviderZhipu, firstNonEmpty(cfg.LLM.Zhipu.Model, "glm-4-plus"))
+		}
+		if cfg.LLM.Gemini.APIKey != "" {
+			addInner(llm.ProviderGemini, firstNonEmpty(cfg.LLM.Gemini.Model, "gemini-1.5-pro"))
+		}
 	}
 	if len(innerModels) == 0 {
 		return nil, fmt.Errorf("chatruntime: no LLM provider configured")
 	}
-	defProv := cfg.LLM.Default
 	if defProv == "" {
 		defProv = llm.ProviderOpenAI
 	}
