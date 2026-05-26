@@ -698,6 +698,18 @@ func main() {
 			)
 		}
 	}
+
+	// Boot backfill: heal orphaned investigation reports. An RCA worker only
+	// lives inside this process, so any report left in pending/running by a
+	// previous process (crash or deploy mid-investigation) is orphaned —
+	// nothing will ever finish it, and IncidentDetail spins on "Spawning
+	// root-cause analysis worker…" forever. Fail them once at startup so the
+	// SPA shows a re-analyzable error instead of a dead spinner.
+	if n, err := manageralertdata.NewInvestigationRepo(db).FailOrphaned(rootCtx, "interrupted by manager restart"); err != nil {
+		log.Warn("alert: orphaned-investigation backfill failed", slog.Any("err", err))
+	} else if n > 0 {
+		log.Info("alert: failed orphaned investigations on boot", slog.Int64("rows", n))
+	}
 	edgeAuthn := managerbizedge.NewAccessKeyAuthenticator(edgeRepo, log)
 	edgeSvc := managersvcedge.New(edgeUC, nil, log)
 

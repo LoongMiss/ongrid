@@ -93,6 +93,26 @@ func (r *InvestigationRepo) UpdateStatus(ctx context.Context, id, status, reason
 	return nil
 }
 
+// FailOrphaned marks every investigation still in a non-terminal state
+// (pending / running) as failed. A worker only lives inside the manager
+// process, so any pending/running report left over from a previous process
+// is orphaned — its worker died with that process and nothing will ever
+// finish it; without this it spins forever in the SPA ("Spawning root-cause
+// analysis worker…"). Run once at manager startup (mirrors the edge
+// "stale-online" boot backfill). Returns the number of rows healed.
+func (r *InvestigationRepo) FailOrphaned(ctx context.Context, reason string) (int64, error) {
+	res := r.db.WithContext(ctx).Model(&model.InvestigationReport{}).
+		Where("status IN ?", []string{
+			model.InvestigationStatusPending,
+			model.InvestigationStatusRunning,
+		}).
+		Updates(map[string]any{"status": model.InvestigationStatusFailed, "status_reason": reason})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
 // AttachWorker records the spawned worker + audit session so the
 // SPA can deep-link into the underlying transcript while the worker
 // is still running.
