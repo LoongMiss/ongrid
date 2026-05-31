@@ -79,6 +79,59 @@ const SOURCE_PILL_STYLE: Record<SignalSource, string> = {
   trace: 'bg-violet-500/10 text-violet-300 ring-violet-500/30',
 };
 
+// PromqlWindowChips parses [Xm] / [Xh] / [Xs] duration windows out of a
+// PromQL expression and renders them as informational chips. metric_raw
+// rules have no separate Window form field — the window lives inside
+// rate(), increase(), avg_over_time() etc. inside the expression. Surfacing
+// the parsed values here lets the operator see at a glance "this rule
+// averages over a 5min window" without re-reading the expression. Pure
+// display, not editable — to change the window the operator edits the
+// expression itself.
+function PromqlWindowChips({ expr }: { expr: string }) {
+  // Match `[5m]` / `[1h]` / `[30s]` / `[1d]` etc. Optional decimal not
+  // common in PromQL but tolerated. We pick out unique windows in the
+  // order they appear so a `rate(...[5m]) - rate(...[1m])` shows both.
+  const windows = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const re = /\[(\d+(?:\.\d+)?)([smhdwy])\]/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(expr)) !== null) {
+      const tok = `${m[1]}${m[2]}`;
+      if (!seen.has(tok)) {
+        seen.add(tok);
+        out.push(tok);
+      }
+    }
+    return out;
+  }, [expr]);
+  const { tr } = useI18n();
+  if (windows.length === 0) {
+    return (
+      <div className="text-[11px] text-zinc-500">
+        ⏱ {tr('该表达式没有 [窗口] —— 走 Prom 的瞬时查询(每次 evaluator tick 抓一个点)。', 'No [window] in this expression — Prom evaluates instantly (one sample per evaluator tick).')}
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[11px] text-zinc-500">
+      ⏱ {tr('表达式里的窗口:', 'Windows in this expression:')}
+      {windows.map((w) => (
+        <span
+          key={w}
+          className="inline-flex items-center rounded bg-sky-500/10 px-1.5 py-0.5 text-sky-200 ring-1 ring-inset ring-sky-500/30"
+          title={tr(
+            `PromQL 的 [${w}] —— 在该函数(rate/increase/avg_over_time 等)调用里回看 ${w} 长度的数据。要改窗口直接改上方表达式。`,
+            `PromQL [${w}] window — the enclosing rate/increase/avg_over_time call looks back ${w}. To change it, edit the expression above.`,
+          )}
+        >
+          [{w}]
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // humanDur compacts a duration-in-seconds to a chip-friendly string.
 // 300 → "5min"; 600 → "10min"; 30 → "30s"; 3600 → "1h"; 5400 → "1.5h".
 function humanDur(sec: number): string {
@@ -1225,6 +1278,7 @@ function KindSpecificFields({
         <div className="text-[11px] text-zinc-500">
           {tr('表达式自身就是谓词。返回非空向量时触发。多条件用 ', 'The expression is the predicate; the rule fires when it returns a non-empty vector. Combine conditions with ')}<code className="font-mono text-zinc-400">and</code> / <code className="font-mono text-zinc-400">or</code>{tr(' 连接。', '.')}
         </div>
+        <PromqlWindowChips expr={(form.spec?.expr as string) ?? ''} />
       </div>
     );
   }
