@@ -1,14 +1,17 @@
 # <img src="web/public/ongrid-logo.svg" alt="" width="40" align="absmiddle" style="vertical-align: middle;" /> Ongrid
 
-> **Ein Ops-KI-Agent, der deine Infrastruktur versteht, die Ursache findet und sie behebt — direkt aus Slack oder Telegram.** *Monitoring · Remote-Ausführung · Wissensdatenbank · Spezialisten-Agenten · Bash · Dateien — und mehr.*
+> **Ein Ops-KI-Agent, der deine Infrastruktur versteht, die Ursache findet und sie behebt — direkt aus Slack oder Telegram.**
+
+*Metriken · Logs · Traces · Topologie-Auswirkungsbereich · Ursachenkorrelation · Remote-Ausführung · alarmgesteuerte Auto-Untersuchung · RAG-Suche über Wissen und Code · Spezialisten-Agenten und Skills.*
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/ongridio/ongrid)](https://goreportcard.com/report/github.com/ongridio/ongrid)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tech](https://img.shields.io/badge/Tech-Go%20%7C%20TypeScript%20%7C%20React-blue)](#)
+[![Release](https://img.shields.io/github/v/release/ongridio/ongrid?logo=github&label=release&color=2563eb)](https://github.com/ongridio/ongrid/releases/latest)
+[![Go](https://img.shields.io/github/go-mod/go-version/ongridio/ongrid?logo=go&logoColor=white&color=00ADD8)](go.mod)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?logo=apache)](https://opensource.org/licenses/Apache-2.0)
+[![Stack](https://img.shields.io/badge/stack-Go%20%7C%20TypeScript%20%7C%20React-1e40af?logo=react&logoColor=white)](#features)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-22c55e.svg?logo=git&logoColor=white)](CONTRIBUTING.md)
 
 [English](./README.md) | [简体中文](./README_ZH.md) | [日本語](./README_JA.md) | [한국어](./README_KO.md) | [Español](./README_ES.md) | [Français](./README_FR.md) | Deutsch | [Português](./README_PT.md) | [Русский](./README_RU.md)
-
-[Funktionen](#funktionen) • [Installation](#installation) • [Integrationen](#integrationen) • [Lizenz](#lizenz)
 
 ---
 
@@ -16,6 +19,12 @@
   <img src="docs/assets/demo.gif" alt="Ongrid demo" width="100%" />
 </p>
 <p align="center"><sub><a href="https://github.com/ongridio/ongrid/releases/download/v0.7.169/Area2_hq.mp4">▶ Vollständige Demo in HD ansehen (MP4, 18 MB)</a></sub></p>
+
+<div align="center">
+
+[Funktionen](#funktionen) • [Installation](#installation) • [Integrationen](#integrationen) • [Lizenz](#lizenz)
+
+</div>
 
 ## Funktionen
 

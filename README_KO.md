@@ -1,14 +1,17 @@
 # <img src="web/public/ongrid-logo.svg" alt="" width="40" align="absmiddle" style="vertical-align: middle;" /> Ongrid
 
-> **인프라를 이해하고, 근본 원인을 찾아내고, 직접 고치는 운영 AI 에이전트 — Slack과 Telegram에서 바로.** *모니터링 · 원격 실행 · 지식 베이스 · 전문 에이전트 · Bash · 파일 — 그 외 다수.*
+> **인프라를 이해하고, 근본 원인을 찾아내고, 직접 고치는 운영 AI 에이전트 — Slack과 Telegram에서 바로.**
+
+*메트릭 · 로그 · 트레이스 · 토폴로지 영향 범위 · 근본 원인 상관 분석 · 원격 실행 · 알림 기반 자동 조사 · 지식·코드 RAG 검색 · 전문 에이전트와 스킬.*
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/ongridio/ongrid)](https://goreportcard.com/report/github.com/ongridio/ongrid)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tech](https://img.shields.io/badge/Tech-Go%20%7C%20TypeScript%20%7C%20React-blue)](#)
+[![Release](https://img.shields.io/github/v/release/ongridio/ongrid?logo=github&label=release&color=2563eb)](https://github.com/ongridio/ongrid/releases/latest)
+[![Go](https://img.shields.io/github/go-mod/go-version/ongridio/ongrid?logo=go&logoColor=white&color=00ADD8)](go.mod)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?logo=apache)](https://opensource.org/licenses/Apache-2.0)
+[![Stack](https://img.shields.io/badge/stack-Go%20%7C%20TypeScript%20%7C%20React-1e40af?logo=react&logoColor=white)](#features)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-22c55e.svg?logo=git&logoColor=white)](CONTRIBUTING.md)
 
 [English](./README.md) | [简体中文](./README_ZH.md) | [日本語](./README_JA.md) | 한국어 | [Español](./README_ES.md) | [Français](./README_FR.md) | [Deutsch](./README_DE.md) | [Português](./README_PT.md) | [Русский](./README_RU.md)
-
-[기능](#기능) • [설치](#설치) • [연동](#연동) • [라이선스](#라이선스)
 
 ---
 
@@ -16,6 +19,12 @@
   <img src="docs/assets/demo.gif" alt="Ongrid demo" width="100%" />
 </p>
 <p align="center"><sub><a href="https://github.com/ongridio/ongrid/releases/download/v0.7.169/Area2_hq.mp4">▶ 전체 HD 영상 보기 (MP4, 18 MB)</a></sub></p>
+
+<div align="center">
+
+[기능](#기능) • [설치](#설치) • [연동](#연동) • [라이선스](#라이선스)
+
+</div>
 
 ## 기능
 
