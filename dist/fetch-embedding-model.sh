@@ -20,38 +20,38 @@ warn() { printf '[fetch-emb] warn: %s\n' "$*" >&2; }
 die()  { printf '[fetch-emb] error: %s\n' "$*" >&2; exit 1; }
 
 # The bundle layout fastembed-go expects under CacheDir/<EmbeddingModel>/
-# is a flat directory of these files. We download them straight from the
-# Qdrant fastembed model mirror on HuggingFace (mirrors of the BAAI bge
-# weights, pre-quantized to int8 ONNX).
+# is the extracted qdrant-fastembed tarball. Keep this URL aligned with
+# github.com/anush008/fastembed-go@v1.0.0's downloadFromGcs implementation.
 MODEL=fast-bge-small-zh-v1.5
-HF_BASE=https://huggingface.co/Qdrant/bge-small-zh-v1.5-onnx-Q/resolve/main
+FASTEMBED_BASE=${ONGRID_FASTEMBED_BASE:-https://storage.googleapis.com/qdrant-fastembed}
 TARGET="$DEST/$MODEL"
 
-# Files fastembed-go reads — verified against an actual cache populated
-# by NewFlagEmbedding(BGESmallZH). If upstream renames any of these,
-# fastembed will hit "missing file" and we'll see it on first manager
-# boot — easy to spot.
 FILES=(model_optimized.onnx tokenizer_config.json special_tokens_map.json
        config.json tokenizer.json vocab.txt ort_config.json)
 
 mkdir -p "$TARGET"
+missing=0
 for f in "${FILES[@]}"; do
-    if [[ -s "$TARGET/$f" ]]; then
-        log "$f already present — skipping"
-        continue
-    fi
-    log "fetching $f"
-    if ! curl -fL --retry 3 --connect-timeout 15 -o "$TARGET/$f" "$HF_BASE/$f"; then
-        warn "failed to fetch $f from $HF_BASE — try ONGRID_HF_MIRROR=https://hf-mirror.com (CN-friendly)"
-        if [[ -n "${ONGRID_HF_MIRROR:-}" ]]; then
-            alt="${ONGRID_HF_MIRROR%/}/Qdrant/bge-small-zh-v1.5-onnx-Q/resolve/main/$f"
-            log "retrying via mirror: $alt"
-            curl -fL --retry 3 --connect-timeout 15 -o "$TARGET/$f" "$alt"
-        else
-            die "no mirror configured + upstream unreachable"
-        fi
+    if [[ ! -s "$TARGET/$f" ]]; then
+        missing=1
+        break
     fi
 done
+
+if [[ "$missing" -eq 0 ]]; then
+    log "$MODEL already present — skipping"
+else
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    url="${FASTEMBED_BASE%/}/${MODEL}.tar.gz"
+    log "fetching $url"
+    curl -fL --retry 3 --connect-timeout 15 -o "$tmp" "$url" || die "failed to fetch $url"
+    rm -rf "$TARGET"
+    tar -xzf "$tmp" -C "$DEST"
+    for f in "${FILES[@]}"; do
+        [[ -s "$TARGET/$f" ]] || die "downloaded model missing $f"
+    done
+fi
 
 log "cached $TARGET ($(du -sh "$TARGET" | awk '{print $1}'))"
 log "next \`make package\` will bundle this under embeddings/$MODEL/"

@@ -259,6 +259,7 @@ docker-save: ## [release] docker save ongrid:$(VERSION) 到 stage
 # Promtail bundle (ADR-012 / ADR-015 logs plugin).
 # Cached under bin/<os>-<arch>/promtail to avoid re-downloading on every build.
 PROMTAIL_VERSION ?= 3.4.0
+FETCH_CURL_FLAGS ?= -fL --retry 3 --retry-all-errors --retry-delay 3 --connect-timeout 15 --speed-time 60 --speed-limit 1024 --show-error
 
 .PHONY: fetch-promtail
 fetch-promtail: ## [release] 下载 promtail 到 bin/<os>-<arch>/promtail (Grafana 只发 linux 版本)
@@ -273,7 +274,7 @@ fetch-promtail: ## [release] 下载 promtail 到 bin/<os>-<arch>/promtail (Grafa
 		zip=/tmp/promtail-$$os-$$arch.zip; \
 		url=https://github.com/grafana/loki/releases/download/v$(PROMTAIL_VERSION)/promtail-$$os-$$arch.zip; \
 		echo "[promtail] downloading $$url"; \
-		curl -fsL -o $$zip $$url || { echo "promtail download failed for $$target"; exit 1; }; \
+		curl $(FETCH_CURL_FLAGS) -o $$zip $$url || { echo "promtail download failed for $$target"; exit 1; }; \
 		unzip -p $$zip > $$dest; \
 		chmod +x $$dest; \
 		rm -f $$zip; \
@@ -301,7 +302,7 @@ fetch-otelcol: ## [release] 下载 otelcol-contrib 到 bin/<os>-<arch>/otelcol-c
 		tgz=/tmp/otelcol-contrib-$$os-$$arch.tar.gz; \
 		url=https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v$(OTELCOL_VERSION)/otelcol-contrib_$(OTELCOL_VERSION)_$${os}_$${arch}.tar.gz; \
 		echo "[otelcol] downloading $$url"; \
-		curl -fsL -o $$tgz $$url || { echo "otelcol-contrib download failed for $$target"; exit 1; }; \
+		curl $(FETCH_CURL_FLAGS) -o $$tgz $$url || { echo "otelcol-contrib download failed for $$target"; exit 1; }; \
 		tar -xzf $$tgz -C $(BIN_DIR)/$$target otelcol-contrib || { echo "extract failed for $$target"; exit 1; }; \
 		chmod +x $$dest; \
 		rm -f $$tgz; \
@@ -336,7 +337,7 @@ fetch-node-exporter: ## [release] 下载 node_exporter 到 bin/<os>-<arch>/node_
 		tgz=/tmp/node_exporter-$$os-$$arch.tar.gz; \
 		url=https://github.com/prometheus/node_exporter/releases/download/v$(NODE_EXPORTER_VERSION)/node_exporter-$(NODE_EXPORTER_VERSION).$${os}-$${arch}.tar.gz; \
 		echo "[node_exporter] downloading $$url"; \
-		curl -fsL -o $$tgz $$url || { echo "node_exporter download failed for $$target"; exit 1; }; \
+		curl $(FETCH_CURL_FLAGS) -o $$tgz $$url || { echo "node_exporter download failed for $$target"; exit 1; }; \
 		tar -xzf $$tgz --strip-components=1 -C $(BIN_DIR)/$$target node_exporter-$(NODE_EXPORTER_VERSION).$${os}-$${arch}/node_exporter || { echo "extract failed for $$target"; exit 1; }; \
 		chmod +x $$dest; \
 		rm -f $$tgz; \
@@ -357,7 +358,7 @@ fetch-process-exporter: ## [release] 下载 process-exporter 到 bin/<os>-<arch>
 		tgz=/tmp/process_exporter-$$os-$$arch.tar.gz; \
 		url=https://github.com/ncabatoff/process-exporter/releases/download/v$(PROCESS_EXPORTER_VERSION)/process-exporter-$(PROCESS_EXPORTER_VERSION).$${os}-$${arch}.tar.gz; \
 		echo "[process_exporter] downloading $$url"; \
-		curl -fsL -o $$tgz $$url || { echo "process-exporter download failed for $$target"; exit 1; }; \
+		curl $(FETCH_CURL_FLAGS) -o $$tgz $$url || { echo "process-exporter download failed for $$target"; exit 1; }; \
 		tar -xzf $$tgz --strip-components=1 -C $(BIN_DIR)/$$target process-exporter-$(PROCESS_EXPORTER_VERSION).$${os}-$${arch}/process-exporter || { echo "extract failed for $$target"; exit 1; }; \
 		mv $(BIN_DIR)/$$target/process-exporter $$dest; \
 		chmod +x $$dest; \
