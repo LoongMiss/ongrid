@@ -92,28 +92,31 @@ export default function FlowsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-6">
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold text-zinc-100">{tr('编排', 'Workflows')}</h1>
-          <p className="mt-1 text-[13px] text-zinc-500">
-            {tr(
-              '可视化编排：触发 → Agent / 工具 / 条件 / 通知 节点连成自动化流程。',
-              'Visual orchestration: wire trigger → agent / tool / condition / notify nodes into automations.'
-            )}
-          </p>
+    <main className="anim-fade flex flex-1 flex-col overflow-hidden">
+      <header className="app-header border-b border-zinc-800 px-6 py-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-base font-semibold text-zinc-100">{tr('编排', 'Workflows')}</h1>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              {tr(
+                `可视化编排：触发 → Agent / 工具 / 条件 / 通知 节点连成自动化流程 · 共 ${items.length} 个`,
+                `Wire trigger → agent / tool / condition / notify nodes into automations · ${items.length} total`
+              )}
+            </p>
+          </div>
+          {canWrite && !creating && (
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-500"
+            >
+              <Plus size={14} />
+              {tr('新建编排', 'New workflow')}
+            </button>
+          )}
         </div>
-        {canWrite && !creating && (
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-indigo-500"
-          >
-            <Plus size={15} />
-            {tr('新建编排', 'New workflow')}
-          </button>
-        )}
-      </div>
+      </header>
+      <div className="flex-1 overflow-y-auto px-6 py-4">
 
       {creating && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
@@ -215,6 +218,7 @@ export default function FlowsPage() {
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </main>
   );
 }

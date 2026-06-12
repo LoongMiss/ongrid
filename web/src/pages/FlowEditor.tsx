@@ -377,14 +377,14 @@ export default function FlowEditorPage() {
 
   if (!flow) {
     return (
-      <div className="py-16 text-center text-[13px] text-zinc-500">
+      <main className="anim-fade flex flex-1 items-center justify-center text-[13px] text-zinc-500">
         {error || tr('加载中…', 'Loading…')}
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="flex h-[calc(100vh-0px)] flex-col">
+    <main className="anim-fade flex min-w-0 flex-1 flex-col overflow-hidden">
       {/* toolbar */}
       <div className="flex items-center gap-3 border-b border-zinc-800 px-4 py-2">
         <button
@@ -591,7 +591,7 @@ export default function FlowEditorPage() {
           </div>
         )}
       </div>
-    </div>
+    </main>
   );
 }
 
