@@ -26,8 +26,10 @@ import {
   Bell,
   Bot,
   CircleDot,
+  Clock,
   GitBranch,
   History,
+  Siren,
   Play,
   Save,
   Trash2,
@@ -57,6 +59,8 @@ import { useAuth } from '@/store/auth';
 
 const NODE_META: Record<FlowNodeType, { icon: typeof Bot; color: string; zh: string; en: string }> = {
   'trigger.manual': { icon: CircleDot, color: 'text-emerald-400', zh: '手动触发', en: 'Manual trigger' },
+  'trigger.alert_fired': { icon: Siren, color: 'text-rose-400', zh: '告警触发', en: 'On alert' },
+  'trigger.cron': { icon: Clock, color: 'text-amber-400', zh: '定时触发', en: 'On schedule' },
   agent: { icon: Bot, color: 'text-indigo-400', zh: 'Agent', en: 'Agent' },
   tool: { icon: Wrench, color: 'text-sky-400', zh: '工具', en: 'Tool' },
   condition: { icon: GitBranch, color: 'text-amber-400', zh: '条件', en: 'Condition' },
@@ -67,7 +71,7 @@ const NODE_META: Record<FlowNodeType, { icon: typeof Bot; color: string; zh: str
 // Core nodes the user hand-places. `tool` is excluded here — tool nodes
 // come from the searchable catalog (every registered BaseTool), added via
 // addNode('tool', {config:{tool}}).
-const BASE_NODE_TYPES: FlowNodeType[] = ['trigger.manual', 'agent', 'condition', 'notify', 'set'];
+const BASE_NODE_TYPES: FlowNodeType[] = ['trigger.manual', 'trigger.alert_fired', 'trigger.cron', 'agent', 'condition', 'notify', 'set'];
 
 const CATEGORY_ORDER = ['observability', 'host', 'topology', 'incident', 'sre', 'knowledge', 'control', 'other'];
 const CATEGORY_LABEL: Record<string, { zh: string; en: string }> = {
@@ -110,26 +114,23 @@ function FlowCanvasNode({ data, selected }: NodeProps<CanvasNode>) {
   const isTrigger = data.flowType.startsWith('trigger.');
   return (
     <div
-      className={`min-w-[150px] rounded-lg border bg-zinc-900 px-3 py-2 text-left transition-shadow ${statusRing(
+      className={`flex min-w-[96px] max-w-[200px] items-center gap-1.5 rounded-md border bg-zinc-900 px-2 py-1 text-left transition-shadow ${statusRing(
         data.runStatus
       )} ${selected ? 'ring-1 ring-indigo-500' : ''}`}
     >
-      {!isTrigger && <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !bg-zinc-500" />}
-      <div className="flex items-center gap-2">
-        <Icon size={14} className={meta?.color ?? 'text-zinc-400'} />
-        <span className="text-[12px] font-medium text-zinc-200">{data.label}</span>
-      </div>
-      <div className="mt-0.5 text-[10px] uppercase tracking-wide text-zinc-500">{data.flowType}</div>
+      {!isTrigger && <Handle type="target" position={Position.Left} className="!h-1.5 !w-1.5 !min-w-0 !border-0 !bg-zinc-500" />}
+      <Icon size={12} className={`shrink-0 ${meta?.color ?? 'text-zinc-400'}`} />
+      <span className="truncate text-[11px] font-medium text-zinc-200">{data.label}</span>
       {isCondition ? (
         <>
-          <Handle id="true" type="source" position={Position.Right} style={{ top: '35%' }} className="!h-2.5 !w-2.5 !bg-emerald-500" />
-          <Handle id="false" type="source" position={Position.Right} style={{ top: '70%' }} className="!h-2.5 !w-2.5 !bg-zinc-500" />
+          <Handle id="true" type="source" position={Position.Right} style={{ top: '32%' }} className="!h-1.5 !w-1.5 !min-w-0 !border-0 !bg-emerald-500" />
+          <Handle id="false" type="source" position={Position.Right} style={{ top: '68%' }} className="!h-1.5 !w-1.5 !min-w-0 !border-0 !bg-zinc-500" />
         </>
       ) : (
-        <Handle id="next" type="source" position={Position.Right} className="!h-2.5 !w-2.5 !bg-indigo-500" />
+        <Handle id="next" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !min-w-0 !border-0 !bg-indigo-500" />
       )}
       {!isTrigger && (
-        <Handle id="error" type="source" position={Position.Bottom} className="!h-2 !w-2 !bg-red-500/80" />
+        <Handle id="error" type="source" position={Position.Bottom} className="!h-1.5 !w-1.5 !min-w-0 !border-0 !bg-red-500/80" />
       )}
     </div>
   );
@@ -194,6 +195,13 @@ type FieldSpec = { key: string; zh: string; en: string; kind: 'text' | 'textarea
 
 const CONFIG_FIELDS: Record<FlowNodeType, FieldSpec[]> = {
   'trigger.manual': [],
+  'trigger.alert_fired': [
+    { key: 'rule', zh: '规则名包含（留空=所有告警）', en: 'Rule name contains (blank = all alerts)', kind: 'text', placeholder: '如 disk / cpu' },
+    { key: 'min_severity', zh: '最低严重度（warning/error/critical，留空=不限）', en: 'Min severity (warning/error/critical; blank = any)', kind: 'text', placeholder: 'critical' },
+  ],
+  'trigger.cron': [
+    { key: 'cron', zh: '定时表达式（标准 5 段 cron，UTC）', en: 'Cron schedule (standard 5-field, UTC)', kind: 'text', placeholder: '0 8 * * *  (每天 UTC 08:00)' },
+  ],
   agent: [
     { key: 'persona', zh: '角色 (persona)', en: 'Persona', kind: 'text', placeholder: 'default / specialist-network / …' },
     { key: 'instruction', zh: '指令（支持 {{…}} 模板）', en: 'Instruction ({{…}} templates)', kind: 'textarea', placeholder: '诊断 {{trigger.host}} 上的磁盘告警…' },
@@ -540,6 +548,8 @@ export default function FlowEditorPage() {
             elementsSelectable
             deleteKeyCode={canWrite ? ['Backspace', 'Delete'] : []}
             fitView
+            fitViewOptions={{ maxZoom: 1, padding: 0.3 }}
+            defaultEdgeOptions={{ type: 'smoothstep' }}
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} gap={18} size={1} />

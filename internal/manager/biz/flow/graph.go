@@ -25,6 +25,8 @@ import (
 // can grow without schema migrations.
 const (
 	NodeTriggerManual = "trigger.manual"
+	NodeTriggerAlert  = "trigger.alert_fired"
+	NodeTriggerCron   = "trigger.cron"
 	NodeAgent         = "agent"
 	NodeTool          = "tool"
 	NodeCondition     = "condition"
@@ -72,6 +74,8 @@ type Graph struct {
 
 var knownTypes = map[string]bool{
 	NodeTriggerManual: true,
+	NodeTriggerAlert:  true,
+	NodeTriggerCron:   true,
 	NodeAgent:         true,
 	NodeTool:          true,
 	NodeCondition:     true,

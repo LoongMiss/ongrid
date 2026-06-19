@@ -58,7 +58,13 @@ type runState struct {
 
 // Execute runs the graph to completion and returns the terminal run
 // status. It is synchronous — the usecase calls it from a goroutine.
-func (e *Engine) Execute(ctx context.Context, run *model.FlowRun, g *Graph) (status string, runErr error) {
+//
+// entryType scopes which trigger nodes start the run: "" starts every
+// trigger (legacy manual behaviour), a specific type (e.g.
+// trigger.alert_fired) starts only matching triggers so a flow with both
+// a manual and an alert trigger doesn't double-fire the manual branch on
+// an alert.
+func (e *Engine) Execute(ctx context.Context, run *model.FlowRun, g *Graph, entryType string) (status string, runErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			status = model.RunStatusFailed
@@ -67,9 +73,15 @@ func (e *Engine) Execute(ctx context.Context, run *model.FlowRun, g *Graph) (sta
 		}
 	}()
 
-	triggers := g.Triggers()
+	all := g.Triggers()
+	triggers := all[:0:0]
+	for _, t := range all {
+		if entryType == "" || t.Type == entryType {
+			triggers = append(triggers, t)
+		}
+	}
 	if len(triggers) == 0 {
-		return model.RunStatusFailed, fmt.Errorf("graph has no trigger node")
+		return model.RunStatusFailed, fmt.Errorf("graph has no %s trigger node", entryTypeLabel(entryType))
 	}
 
 	var trigger map[string]any
@@ -227,4 +239,12 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// entryTypeLabel renders entryType for error messages ("any" when empty).
+func entryTypeLabel(t string) string {
+	if t == "" {
+		return "any"
+	}
+	return t
 }

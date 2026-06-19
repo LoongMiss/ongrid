@@ -59,9 +59,11 @@ const (
 // resolution (every string leaf already substituted).
 func (x Executors) execute(ctx context.Context, node GraphNode, cfg map[string]any, rc *RunContext) (NodeResult, error) {
 	switch node.Type {
-	case NodeTriggerManual:
-		// The trigger's "output" is the trigger payload itself so
+	case NodeTriggerManual, NodeTriggerAlert, NodeTriggerCron:
+		// Every trigger's "output" is the trigger payload itself so
 		// downstream can use either {{trigger.x}} or {{nodes.<id>.output.x}}.
+		// The payload differs by source (manual input / incident context /
+		// cron fire time) but the node behaviour is identical.
 		return NodeResult{Output: anyMap(rc.Trigger), Port: PortNext}, nil
 
 	case NodeAgent:

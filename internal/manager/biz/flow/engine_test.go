@@ -195,7 +195,7 @@ func TestEngineBranchTrue(t *testing.T) {
 	}, &fakeRunRepo{}, nil)
 
 	run := &model.FlowRun{ID: "r1", TriggerJSON: `{"host":"vm-1"}`}
-	status, err := eng.Execute(context.Background(), run, mustGraph(t, branchGraph))
+	status, err := eng.Execute(context.Background(), run, mustGraph(t, branchGraph), "")
 	if err != nil || status != model.RunStatusSucceeded {
 		t.Fatalf("Execute = %s, %v", status, err)
 	}
@@ -217,7 +217,7 @@ func TestEngineBranchFalse(t *testing.T) {
 	}, &fakeRunRepo{}, nil)
 
 	run := &model.FlowRun{ID: "r2", TriggerJSON: `{"host":"vm-1"}`}
-	status, err := eng.Execute(context.Background(), run, mustGraph(t, branchGraph))
+	status, err := eng.Execute(context.Background(), run, mustGraph(t, branchGraph), "")
 	if err != nil || status != model.RunStatusSucceeded {
 		t.Fatalf("Execute = %s, %v", status, err)
 	}
@@ -236,7 +236,7 @@ func TestEngineUnhandledErrorFailsRun(t *testing.T) {
 		"nodes":[{"id":"t","type":"trigger.manual"},{"id":"x","type":"tool","config":{"tool":"bash","args":{}}}],
 		"edges":[{"id":"e1","source":"t","target":"x"}]
 	}`)
-	status, err := eng.Execute(context.Background(), &model.FlowRun{ID: "r3", TriggerJSON: "{}"}, g)
+	status, err := eng.Execute(context.Background(), &model.FlowRun{ID: "r3", TriggerJSON: "{}"}, g, "")
 	if status != model.RunStatusFailed || err == nil {
 		t.Fatalf("want failed run, got %s, %v", status, err)
 	}
@@ -257,7 +257,7 @@ func TestEngineErrorPortHandlesFailure(t *testing.T) {
 			{"id":"e2","source":"x","sourcePort":"error","target":"alarm"}
 		]
 	}`)
-	status, err := eng.Execute(context.Background(), &model.FlowRun{ID: "r4", TriggerJSON: "{}"}, g)
+	status, err := eng.Execute(context.Background(), &model.FlowRun{ID: "r4", TriggerJSON: "{}"}, g, "")
 	if err != nil || status != model.RunStatusSucceeded {
 		t.Fatalf("handled error should succeed run, got %s, %v", status, err)
 	}
@@ -280,7 +280,7 @@ func TestEngineFanOutRunsBothBranches(t *testing.T) {
 			{"id":"e2","source":"t","target":"b"}
 		]
 	}`)
-	status, err := eng.Execute(context.Background(), &model.FlowRun{ID: "r5", TriggerJSON: "{}"}, g)
+	status, err := eng.Execute(context.Background(), &model.FlowRun{ID: "r5", TriggerJSON: "{}"}, g, "")
 	if err != nil || status != model.RunStatusSucceeded {
 		t.Fatalf("Execute = %s, %v", status, err)
 	}
@@ -307,7 +307,7 @@ func TestEngineExecuteOnceOnDiamond(t *testing.T) {
 			{"id":"e4","source":"b","target":"c"}
 		]
 	}`)
-	status, err := eng.Execute(context.Background(), &model.FlowRun{ID: "r6", TriggerJSON: "{}"}, g)
+	status, err := eng.Execute(context.Background(), &model.FlowRun{ID: "r6", TriggerJSON: "{}"}, g, "")
 	if err != nil || status != model.RunStatusSucceeded {
 		t.Fatalf("Execute = %s, %v", status, err)
 	}

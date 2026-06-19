@@ -53,6 +53,14 @@ func (r *Repo) List(ctx context.Context, limit, offset int) ([]*model.Flow, int6
 	return out, total, nil
 }
 
+func (r *Repo) ListEnabled(ctx context.Context) ([]*model.Flow, error) {
+	var out []*model.Flow
+	if err := r.db.WithContext(ctx).Where("enabled = ?", true).Order("id ASC").Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (r *Repo) Delete(ctx context.Context, id uint64) error {
 	res := r.db.WithContext(ctx).Delete(&model.Flow{}, id)
 	if res.Error != nil {

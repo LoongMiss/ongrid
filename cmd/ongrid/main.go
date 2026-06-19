@@ -1564,8 +1564,14 @@ func main() {
 		managerbizflow.NewEngine(flowExec, flowRunRepo, log), log).
 		WithToolCatalog(flowToolCatalog{reg: toolsReg})
 	flowUC.HealStaleRuns(rootCtx)
+	// HLD-016 triggers: alert dispatcher (auto-start matching flows when an
+	// alert fires) + cron scheduler (time-based flows). Both nil-safe and
+	// independent of the LLM runtime — tool/notify/condition flows run
+	// regardless of whether agent nodes are usable.
+	alertUC.SetWorkflowDispatcher(managerbizflow.NewDispatcher(flowUC, log))
+	managerbizflow.NewScheduler(flowUC, log).Start(rootCtx)
 	flowHandler := managerserverflow.NewHandler(flowUC)
-	log.Info("flow: orchestration wired")
+	log.Info("flow: orchestration wired (alert + cron triggers active)")
 
 	// Boot compensation pass for the structured RCA path: incidents that
 	// fired while no LLM provider was configured had their auto-investigation

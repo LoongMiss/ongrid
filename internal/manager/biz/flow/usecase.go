@@ -24,6 +24,9 @@ type Repo interface {
 	Update(ctx context.Context, f *model.Flow) error
 	Get(ctx context.Context, id uint64) (*model.Flow, error)
 	List(ctx context.Context, limit, offset int) ([]*model.Flow, int64, error)
+	// ListEnabled returns every enabled flow (no paging) — the alert
+	// dispatcher and cron scheduler scan these for matching triggers.
+	ListEnabled(ctx context.Context) ([]*model.Flow, error)
 	Delete(ctx context.Context, id uint64) error
 }
 
@@ -163,10 +166,35 @@ func (u *Usecase) Delete(ctx context.Context, id uint64) error {
 	return u.repo.Delete(ctx, id)
 }
 
-// Trigger starts a manual run. The engine executes on a background
-// goroutine; the returned run row is already persisted with
-// status=running so the UI can poll immediately.
+// Trigger starts a manual run (the HTTP "Run" button). Thin wrapper over
+// triggerRun pinned to the manual entry node.
 func (u *Usecase) Trigger(ctx context.Context, id uint64, input map[string]any, by *uint64) (*model.FlowRun, error) {
+	return u.triggerRun(ctx, id, NodeTriggerManual, input, by, true)
+}
+
+// ListEnabledFlows returns every enabled flow — the dispatcher /
+// scheduler scan source.
+func (u *Usecase) ListEnabledFlows(ctx context.Context) ([]*model.Flow, error) {
+	if u.repo == nil {
+		return nil, errs.ErrNotWiredYet
+	}
+	return u.repo.ListEnabled(ctx)
+}
+
+// TriggerEvent starts a run from a non-manual source (alert dispatcher /
+// cron scheduler). entryType is the trigger node type to enter at
+// (NodeTriggerAlert / NodeTriggerCron); payload becomes {{trigger.*}}.
+// Returns ErrNotFound-class silently-skippable errors when the flow has
+// no matching trigger (caller already pre-filtered, but races happen).
+func (u *Usecase) TriggerEvent(ctx context.Context, flowID uint64, entryType string, payload map[string]any) (*model.FlowRun, error) {
+	return u.triggerRun(ctx, flowID, entryType, payload, nil, false)
+}
+
+// triggerRun is the shared run-launch core. requireEnabled distinguishes
+// the manual path (surfaces "flow disabled" as a user error) from event
+// paths (caller already filtered to enabled flows; a disabled flow here
+// is a benign race → skip).
+func (u *Usecase) triggerRun(ctx context.Context, id uint64, entryType string, input map[string]any, by *uint64, requireEnabled bool) (*model.FlowRun, error) {
 	if u.repo == nil || u.runs == nil || u.engine == nil {
 		return nil, errs.ErrNotWiredYet
 	}
@@ -175,15 +203,27 @@ func (u *Usecase) Trigger(ctx context.Context, id uint64, input map[string]any, 
 		return nil, err
 	}
 	if !f.Enabled {
-		return nil, fmt.Errorf("%w: flow disabled", errs.ErrInvalid)
+		if requireEnabled {
+			return nil, fmt.Errorf("%w: flow disabled", errs.ErrInvalid)
+		}
+		return nil, nil // event path: benign skip
 	}
 	g, err := ParseGraph(f.GraphJSON)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errs.ErrInvalid, err)
 	}
-	if len(g.Triggers()) == 0 {
-		return nil, fmt.Errorf("%w: graph has no trigger node", errs.ErrInvalid)
+	// Confirm the requested entry trigger exists in this graph.
+	hasEntry := false
+	for _, t := range g.Triggers() {
+		if t.Type == entryType {
+			hasEntry = true
+			break
+		}
 	}
+	if !hasEntry {
+		return nil, fmt.Errorf("%w: graph has no %s trigger", errs.ErrInvalid, entryType)
+	}
+
 	tb, _ := json.Marshal(input)
 	if input == nil {
 		tb = []byte("{}")
@@ -194,7 +234,7 @@ func (u *Usecase) Trigger(ctx context.Context, id uint64, input map[string]any, 
 		FlowID:      f.ID,
 		FlowVersion: f.Version,
 		Status:      model.RunStatusRunning,
-		TriggerType: model.TriggerManual,
+		TriggerType: entryType,
 		TriggerJSON: string(tb),
 		CreatedBy:   by,
 		StartedAt:   &now,
@@ -203,12 +243,12 @@ func (u *Usecase) Trigger(ctx context.Context, id uint64, input map[string]any, 
 		return nil, err
 	}
 
-	// Detach from the HTTP request context — the run must outlive it
-	// (same rationale as the chat workCtx fix: a closed connection
-	// must not cancel in-flight work).
+	// Detach from the request context — the run must outlive it (same
+	// rationale as the chat workCtx fix: a closed connection must not
+	// cancel in-flight work).
 	go func() {
 		bg := context.Background()
-		status, execErr := u.engine.Execute(bg, run, g)
+		status, execErr := u.engine.Execute(bg, run, g, entryType)
 		fin := time.Now().UTC()
 		run.Status = status
 		run.FinishedAt = &fin

@@ -8,6 +8,8 @@ import { request } from './client';
 
 export type FlowNodeType =
   | 'trigger.manual'
+  | 'trigger.alert_fired'
+  | 'trigger.cron'
   | 'agent'
   | 'tool'
   | 'condition'
