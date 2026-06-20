@@ -1554,7 +1554,7 @@ func main() {
 	flowRepo := managerflowdata.NewRepo(db)
 	flowRunRepo := managerflowdata.NewRunRepo(db)
 	flowExec := managerbizflow.Executors{
-		Tools:  flowToolInvoker{reg: toolsReg},
+		Tools:  newFlowToolInvoker(toolsReg),
 		Notify: flowNotifierShim{channels: alertRepo, router: notifyRouter},
 		LLM:    flowLLMRunner{client: llmClient},
 	}
@@ -3043,14 +3043,45 @@ func (a webshellAuditAdapter) List(ctx context.Context, limit int) ([]*wsmodel.S
 // flowToolInvoker implements bizflow.ToolInvoker over the aiops tool
 // registry — flow tool nodes dispatch through the exact same Registry
 // (and decorator chain) the chat agent uses.
-type flowToolInvoker struct{ reg *aiopstools.Registry }
+// flowToolInvoker dispatches a flow tool node through the SAME decorated
+// BaseTool the palette schema came from (BuildBaseTools), not the legacy
+// Registry.Invoke path — otherwise the canvas shows the new batch schema
+// (device_ids) while execution hits the old Tool (edge_name), and they
+// disagree. Going through the BaseTool also means flow tool nodes inherit
+// the full decorator chain (timeout / audit / ReviewGate), as documented.
+type flowToolInvoker struct {
+	tools map[string]aiopstoolsbase.BaseTool
+}
+
+func newFlowToolInvoker(reg *aiopstools.Registry) flowToolInvoker {
+	m := map[string]aiopstoolsbase.BaseTool{}
+	if bag := reg.BuildBaseTools(); bag != nil {
+		for _, t := range bag.AllTools() {
+			if t == nil {
+				continue
+			}
+			if info, err := t.Info(context.Background()); err == nil && info != nil && info.Name != "" {
+				m[info.Name] = t
+			}
+		}
+	}
+	return flowToolInvoker{tools: m}
+}
 
 func (s flowToolInvoker) InvokeTool(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error) {
-	res, err := s.reg.Invoke(ctx, name, args)
+	t, ok := s.tools[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown tool %q", name)
+	}
+	argsStr := string(args)
+	if argsStr == "" {
+		argsStr = "{}"
+	}
+	out, err := t.InvokableRun(ctx, argsStr)
 	if err != nil {
 		return nil, err
 	}
-	return res.ResultJSON, nil
+	return json.RawMessage(out), nil
 }
 
 // flowAgentRunner implements bizflow.AgentRunner over the chatruntime —
