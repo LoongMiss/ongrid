@@ -315,3 +315,38 @@ func TestEngineExecuteOnceOnDiamond(t *testing.T) {
 		t.Fatalf("diamond join ran %d times, want 1", len(tools.calls))
 	}
 }
+
+func TestResolveArrayIndex(t *testing.T) {
+	rc := &RunContext{
+		Trigger: map[string]any{},
+		Vars:    map[string]any{},
+		Nodes: map[string]any{
+			"load": map[string]any{
+				"result": map[string]any{
+					"results": []any{
+						map[string]any{"device_id": float64(1), "host_load": map[string]any{"cpu_pct": float64(13.7)}},
+						map[string]any{"device_id": float64(2)},
+					},
+				},
+			},
+		},
+	}
+	// nested array index → object field
+	v, err := rc.ResolveString("{{nodes.load.output.result.results[0].host_load.cpu_pct}}")
+	if err != nil || v != float64(13.7) {
+		t.Fatalf("array index resolve = %v, %v", v, err)
+	}
+	// second element
+	v, err = rc.ResolveString("{{nodes.load.output.result.results[1].device_id}}")
+	if err != nil || v != float64(2) {
+		t.Fatalf("results[1] = %v, %v", v, err)
+	}
+	// out of range → error
+	if _, err = rc.ResolveString("{{nodes.load.output.result.results[5].device_id}}"); err == nil {
+		t.Fatal("want out-of-range error")
+	}
+	// index on non-array → error
+	if _, err = rc.ResolveString("{{nodes.load.output.result[0]}}"); err == nil {
+		t.Fatal("want non-array error")
+	}
+}

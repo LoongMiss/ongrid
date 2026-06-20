@@ -109,16 +109,52 @@ func (c *RunContext) lookup(path string) (any, error) {
 		return nil, fmt.Errorf("expr: unknown root %q (want trigger/nodes/vars)", parts[0])
 	}
 	for _, p := range parts {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("expr: %q — %q is not an object", path, p)
+		// A segment is "field", "field[0]", or "[0]" — an optional object
+		// key followed by zero or more array index subscripts. This lets
+		// templates walk into batch-tool outputs like
+		// result.results[0].host_load.cpu_pct.
+		key, idxs := splitSegment(p)
+		if key != "" {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("expr: %q — %q is not an object", path, key)
+			}
+			cur, ok = m[key]
+			if !ok {
+				return nil, fmt.Errorf("expr: %q — field %q missing", path, key)
+			}
 		}
-		cur, ok = m[p]
-		if !ok {
-			return nil, fmt.Errorf("expr: %q — field %q missing", path, p)
+		for _, idx := range idxs {
+			arr, ok := cur.([]any)
+			if !ok {
+				return nil, fmt.Errorf("expr: %q — [%d] applied to non-array", path, idx)
+			}
+			if idx < 0 || idx >= len(arr) {
+				return nil, fmt.Errorf("expr: %q — index %d out of range (len %d)", path, idx, len(arr))
+			}
+			cur = arr[idx]
 		}
 	}
 	return cur, nil
+}
+
+var segRe = regexp.MustCompile(`\[(\d+)\]`)
+
+// splitSegment parses one dotted path segment into its object key and any
+// trailing array index subscripts. "results[0]" → ("results", [0]);
+// "[2]" → ("", [2]); "host_load" → ("host_load", nil).
+func splitSegment(seg string) (string, []int) {
+	br := strings.IndexByte(seg, '[')
+	key := seg
+	if br >= 0 {
+		key = seg[:br]
+	}
+	var idxs []int
+	for _, m := range segRe.FindAllStringSubmatch(seg, -1) {
+		n, _ := strconv.Atoi(m[1])
+		idxs = append(idxs, n)
+	}
+	return key, idxs
 }
 
 func anyMap(m map[string]any) any {

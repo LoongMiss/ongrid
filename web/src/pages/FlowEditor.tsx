@@ -270,6 +270,8 @@ export default function FlowEditorPage() {
   const [runs, setRuns] = useState<FlowRun[]>([]);
   const [showRuns, setShowRuns] = useState(false);
   const [activeRun, setActiveRun] = useState<{ run: FlowRun; nodes: FlowRunNode[] } | null>(null);
+  const [lastRunNodes, setLastRunNodes] = useState<FlowRunNode[]>([]);
+  const [copied, setCopied] = useState('');
   const seq = useRef(1);
   const pollRef = useRef<number | null>(null);
   const [tools, setTools] = useState<FlowToolMeta[]>([]);
@@ -299,6 +301,28 @@ export default function FlowEditorPage() {
       if (pollRef.current) window.clearInterval(pollRef.current);
     };
   }, [flowID, setNodes, setEdges]);
+
+  useEffect(() => {
+    let alive = true;
+    // Pull the most recent run's node outputs so the config drawer can show
+    // "what each upstream node actually output" for {{...}} reference help —
+    // even before the user opens the runs drawer.
+    (async () => {
+      try {
+        const list = await listFlowRuns(flowID, 1);
+        const recent = list.items?.[0];
+        if (recent && alive) {
+          const full = await getFlowRun(recent.id);
+          if (alive) setLastRunNodes(full.nodes ?? []);
+        }
+      } catch {
+        /* best-effort */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [flowID]);
 
   useEffect(() => {
     let alive = true;
@@ -630,13 +654,27 @@ export default function FlowEditorPage() {
                 />
               ))
             )}
+            {!selected.data.flowType.startsWith('trigger.') && (
+              <UpstreamRefs
+                selectedId={selected.id}
+                nodes={nodes}
+                edges={edges}
+                runNodes={activeRun?.nodes?.length ? activeRun.nodes : lastRunNodes}
+                onCopy={(ref) => {
+                  void navigator.clipboard?.writeText(ref);
+                  setCopied(ref);
+                  window.setTimeout(() => setCopied(''), 1500);
+                }}
+                copied={copied}
+              />
+            )}
             <div className="mt-2 rounded-md bg-zinc-900/60 p-2 text-[11px] leading-relaxed text-zinc-500">
-              {selected.data.flowType === 'agent'
+              {selected.data.flowType === 'agent' || selected.data.flowType === 'llm'
                 ? tr(
-                    '不声明输出 schema 时，answer 是自由文本——只能接 Agent / 通知节点；要接条件 / 工具，必须声明 schema 并引用 output.structured.*。',
-                    'Without an output schema the answer is free text — consumable only by agent / notify nodes. To feed condition / tool nodes, declare a schema and reference output.structured.*.'
+                    '不声明输出 schema 时，answer 是自由文本——只能接 Agent / LLM / 通知节点；要接条件 / 工具，必须声明 schema 并引用 output.structured.*。',
+                    'Without an output schema the answer is free text — consumable only by agent / LLM / notify nodes. To feed condition / tool nodes, declare a schema and reference output.structured.*.'
                   )
-                : tr('节点 id 用于数据引用：', 'Node id for data refs: ') + `{{nodes.${selected.id}.output.…}}`}
+                : tr('本节点输出引用：', 'This node output ref: ') + `{{nodes.${selected.id}.output.…}}`}
             </div>
           </div>
         )}
@@ -949,6 +987,161 @@ function ToolArgsForm({
         );
       })}
       <div className="mt-1 text-[11px] text-zinc-600">{tr('工具', 'Tool')}: <span className="font-mono">{toolName}</span></div>
+    </div>
+  );
+}
+
+// ---------- upstream reference helper -------------------------------------
+
+// upstreamOf returns the set of node ids reachable backward from targetId
+// (every node that runs before it), so the ref panel only offers data that
+// actually exists at this point in the flow.
+function upstreamOf(targetId: string, edges: Edge[]): Set<string> {
+  const incoming = new Map<string, string[]>();
+  for (const e of edges as { source: string; target: string }[]) {
+    if (!incoming.has(e.target)) incoming.set(e.target, []);
+    incoming.get(e.target)!.push(e.source);
+  }
+  const seen = new Set<string>();
+  const stack = [...(incoming.get(targetId) ?? [])];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const p of incoming.get(id) ?? []) stack.push(p);
+  }
+  return seen;
+}
+
+// flattenPaths walks a decoded JSON value into dotted leaf paths, using
+// [0] for arrays (the engine's expr resolver understands the subscript).
+// Capped in breadth + depth so a huge tool result can't explode the panel.
+function flattenPaths(v: unknown, prefix = '', out: string[] = [], depth = 0): string[] {
+  if (out.length >= 40 || depth > 5) return out;
+  if (Array.isArray(v)) {
+    if (v.length) flattenPaths(v[0], `${prefix}[0]`, out, depth + 1);
+    else if (prefix) out.push(prefix);
+  } else if (v && typeof v === 'object') {
+    for (const k of Object.keys(v as Record<string, unknown>)) {
+      flattenPaths((v as Record<string, unknown>)[k], prefix ? `${prefix}.${k}` : k, out, depth + 1);
+    }
+  } else if (prefix) {
+    out.push(prefix);
+  }
+  return out;
+}
+
+// staticOutputHints is the fallback when a node hasn't run yet — the known
+// output shape per node type, so the user still sees what to reference.
+function staticOutputHints(flowType: FlowNodeType, hasSchema: boolean): string[] {
+  switch (flowType) {
+    case 'tool':
+      return ['result'];
+    case 'agent':
+    case 'llm':
+      return hasSchema ? ['answer', 'structured'] : ['answer'];
+    case 'condition':
+      return ['result'];
+    case 'set':
+      return ['name', 'value'];
+    case 'trigger.alert_fired':
+      return ['incident_id', 'rule', 'severity', 'edge_id', 'device_id', 'labels', 'fired_at'];
+    case 'trigger.cron':
+      return ['fired_at', 'cron'];
+    default:
+      return [];
+  }
+}
+
+function UpstreamRefs({
+  selectedId,
+  nodes,
+  edges,
+  runNodes,
+  onCopy,
+  copied,
+}: {
+  selectedId: string;
+  nodes: CanvasNode[];
+  edges: Edge[];
+  runNodes: FlowRunNode[];
+  onCopy: (ref: string) => void;
+  copied: string;
+}) {
+  const { tr } = useI18n();
+  const ups = useMemo(() => {
+    const set = upstreamOf(selectedId, edges);
+    const runByID = new Map(runNodes.map((r) => [r.node_id, r]));
+    return nodes
+      .filter((n) => set.has(n.id))
+      .map((n) => {
+        const ran = runByID.get(n.id);
+        let paths: string[];
+        let live = false;
+        if (ran && ran.output && Object.keys(ran.output).length) {
+          paths = flattenPaths(ran.output);
+          live = true;
+        } else {
+          const hasSchema = !!(n.data.config?.output_schema);
+          paths = staticOutputHints(n.data.flowType, hasSchema);
+        }
+        return { id: n.id, label: n.data.label, type: n.data.flowType, paths, live };
+      })
+      .filter((u) => u.paths.length > 0);
+  }, [selectedId, nodes, edges, runNodes]);
+
+  if (ups.length === 0) {
+    return (
+      <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-900/40 p-2 text-[11px] text-zinc-600">
+        {tr('无上游节点。把触发器 / 其它节点连到本节点后，这里会列出可引用的数据。', 'No upstream nodes. Wire a trigger / other node into this one to see referenceable data here.')}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-900/40 p-2">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[11px] font-medium text-zinc-400">{tr('可引用的上游数据', 'Upstream data refs')}</span>
+        {copied ? <span className="text-[10px] text-emerald-400">{tr('已复制', 'copied')}</span> : null}
+      </div>
+      <div className="mb-1.5 text-[10px] leading-relaxed text-zinc-600">
+        {tr('点字段复制 {{…}} 引用，粘贴到上面的输入框。', 'Click a field to copy its {{…}} ref, paste into a field above.')}
+      </div>
+      <div className="space-y-1.5">
+        {ups.map((u) => (
+          <div key={u.id}>
+            <div className="flex items-center gap-1 text-[10px] text-zinc-500">
+              <span className="font-medium text-zinc-400">{u.label}</span>
+              <span className="font-mono text-zinc-600">{u.id}</span>
+              {u.live ? (
+                <span className="rounded bg-emerald-900/40 px-1 text-[8px] text-emerald-400">{tr('实测', 'live')}</span>
+              ) : (
+                <span className="rounded bg-zinc-800 px-1 text-[8px] text-zinc-500">{tr('预估', 'shape')}</span>
+              )}
+            </div>
+            <div className="mt-0.5 flex flex-wrap gap-1">
+              {u.paths.map((p) => {
+                const ref = `{{nodes.${u.id}.output.${p}}}`;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    title={ref}
+                    onClick={() => onCopy(ref)}
+                    className={`max-w-full truncate rounded border px-1 py-0.5 font-mono text-[9px] transition-colors ${
+                      copied === ref
+                        ? 'border-emerald-700 bg-emerald-950/40 text-emerald-400'
+                        : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
