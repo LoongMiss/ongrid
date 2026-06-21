@@ -30,6 +30,7 @@ import {
 } from '@/api/marketplace';
 import { Modal } from '@/components/Modal';
 import { CapabilitySummaryView } from '@/components/marketplace/CapabilitySummary';
+import { CredentialBindings } from '@/components/marketplace/CredentialBindings';
 import { SignatureBadge } from '@/components/marketplace/SignatureBadge';
 import { Button, Card, Chip, EmptyState } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -243,6 +244,7 @@ function InstalledList({
               expanded={!!expanded[p.pack_id]}
               onToggle={() => onToggleExpand(p.pack_id)}
               onUninstall={() => onUninstall(p)}
+              onReload={onRefresh}
               isAdmin={isAdmin}
             />
           ))}
@@ -257,12 +259,14 @@ function PackRow({
   expanded,
   onToggle,
   onUninstall,
+  onReload,
   isAdmin,
 }: {
   pack: InstalledPack;
   expanded: boolean;
   onToggle: () => void;
   onUninstall: () => void;
+  onReload: () => void;
   isAdmin: boolean;
 }) {
   const { tr } = useI18n();
@@ -317,6 +321,7 @@ function PackRow({
               {tr('该包没有保存能力声明（旧版安装或解析失败）', 'This pack has no stored capability declaration (legacy install or parse failure)')}
             </div>
           )}
+          <CredentialBindings pack={pack} isAdmin={isAdmin} onSaved={onReload} />
         </div>
       )}
 
@@ -681,6 +686,11 @@ function ConfirmBody({
         <div className="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">{tr('能力声明', 'Capability declaration')}</div>
         <CapabilitySummaryView decl={decl} warnings={warnings} />
       </div>
+
+      {/* Bind credentials right here — install requires admin, so the binder
+          is always actionable. Renders nothing when the pack declares no
+          credential slots. */}
+      <CredentialBindings pack={pack} isAdmin />
 
       <p className="text-[11px] text-zinc-500">
         {tr('包已落盘 + 入库；点「完成」保留，点「回滚卸载」立即移除。', 'Pack is on disk and in the DB. Click Done to keep it, or Roll back to remove it immediately.')}

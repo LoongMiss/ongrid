@@ -703,15 +703,35 @@ func buildCapabilityDeclaration(packID, version string, res *chatruntime.LoadRes
 	classSet := map[string]bool{}
 	binSet := map[string]bool{}
 	cfgSet := map[string]bool{}
+	// Credential slots dedupe across skills by slot key, preserving first
+	// occurrence (so the binding dialog shows one row per slot).
+	credSeen := map[string]bool{}
 
 	for _, sk := range res.Skills {
+		creds := make([]CredentialSlotRecord, 0, len(sk.Metadata.Requires.Credentials))
+		for _, c := range sk.Metadata.Requires.Credentials {
+			if c.Slot == "" {
+				continue
+			}
+			slot := CredentialSlotRecord{
+				Slot:   c.Slot,
+				Label:  c.Label,
+				Fields: append([]string(nil), c.Fields...),
+			}
+			creds = append(creds, slot)
+			if !credSeen[c.Slot] {
+				credSeen[c.Slot] = true
+				caps.Summary.CredentialSlots = append(caps.Summary.CredentialSlots, slot)
+			}
+		}
 		rec := SkillCapabilityRecord{
 			Name:             sk.Name,
 			Scope:            sk.Metadata.Ongrid.Scope,
 			EdgeCapabilities: sk.Metadata.Ongrid.EdgeCapabilities,
 			Requires: RequiresRecord{
-				Bins:   append([]string(nil), sk.Metadata.Requires.Bins...),
-				Config: append([]string(nil), sk.Metadata.Requires.Config...),
+				Bins:        append([]string(nil), sk.Metadata.Requires.Bins...),
+				Config:      append([]string(nil), sk.Metadata.Requires.Config...),
+				Credentials: creds,
 			},
 		}
 		if rec.Scope == "" {
