@@ -95,6 +95,7 @@ import (
 	aiopstoolsdec "github.com/ongridio/ongrid/internal/manager/biz/aiops/tools/decorators"
 	managerbizalert "github.com/ongridio/ongrid/internal/manager/biz/alert"
 	investigator "github.com/ongridio/ongrid/internal/manager/biz/alert/investigator"
+	managerbizapproval "github.com/ongridio/ongrid/internal/manager/biz/approval"
 	managerbizgrafana "github.com/ongridio/ongrid/internal/manager/biz/grafana"
 	managerbizimbridge "github.com/ongridio/ongrid/internal/manager/biz/imbridge"
 	managerbizimbridgefeishu "github.com/ongridio/ongrid/internal/manager/biz/imbridge/provider/feishu"
@@ -108,6 +109,7 @@ import (
 	managerbizskill "github.com/ongridio/ongrid/internal/manager/biz/skill"
 	managerwebshellbiz "github.com/ongridio/ongrid/internal/manager/biz/webshell"
 	manageraiopsdata "github.com/ongridio/ongrid/internal/manager/data/aiops/store"
+	managerapprovaldata "github.com/ongridio/ongrid/internal/manager/data/approval/store"
 	managerimbridgedata "github.com/ongridio/ongrid/internal/manager/data/imbridge/store"
 	managerknowledgedata "github.com/ongridio/ongrid/internal/manager/data/knowledge/store"
 	managermarketplacedata "github.com/ongridio/ongrid/internal/manager/data/marketplace/store"
@@ -129,6 +131,7 @@ import (
 	managerreportdata "github.com/ongridio/ongrid/internal/manager/data/report/store"
 	managerserveraiops "github.com/ongridio/ongrid/internal/manager/server/aiops"
 	managerserveralert "github.com/ongridio/ongrid/internal/manager/server/alert"
+	managerserverapproval "github.com/ongridio/ongrid/internal/manager/server/approval"
 	managerserveraudit "github.com/ongridio/ongrid/internal/manager/server/audit"
 	managerserverdevice "github.com/ongridio/ongrid/internal/manager/server/device"
 	managerserveredge "github.com/ongridio/ongrid/internal/manager/server/edge"
@@ -237,6 +240,7 @@ func main() {
 		managersettingdata.Migrate,
 		managermarketplacedata.Migrate,
 		managersecretdata.Migrate,
+		managerapprovaldata.Migrate,
 		managermonitordata.Migrate,
 		managerwebshelldata.Migrate,
 		manageraudtdata.Migrate,
@@ -1765,6 +1769,11 @@ func main() {
 	// store installed skills (and future external-MCP clients) inject from.
 	secretUC := managerbizsecret.NewUsecase(managersecretdata.NewRepo(db))
 	secretHandler := managerserversecret.NewHandler(secretUC)
+	// HLD-017 propose-confirm inbox: human approval queue for dangerous
+	// actions (agent cloud-shell, etc.). Additive — empty until a producer
+	// proposes; producers register their execute-on-approve executor.
+	approvalUC := managerbizapproval.NewUsecase(managerapprovaldata.NewRepo(db), log.With(slog.String("comp", "approval")))
+	approvalHandler := managerserverapproval.NewHandler(approvalUC)
 	if secretbox.KeyIsWeak() {
 		log.Warn("secret vault: ONGRID_SECRET_KEY unset — credentials encrypted with an INSECURE built-in key; set ONGRID_SECRET_KEY (32+ random chars) for real at-rest protection")
 	}
@@ -1915,6 +1924,7 @@ func main() {
 			integrationHandler.Register(protected)
 			marketplaceHandler.Register(protected)
 			secretHandler.Register(protected)
+			approvalHandler.Register(protected)
 			promProxyHandler.RegisterProtected(protected)
 			managerserveraudit.NewHandler(auditUC).Register(protected)
 			reportHandler.Register(protected)
