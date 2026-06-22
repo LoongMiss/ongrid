@@ -105,6 +105,7 @@ import (
 	managerbizknowledge "github.com/ongridio/ongrid/internal/manager/biz/knowledge"
 	managerbizmarketplace "github.com/ongridio/ongrid/internal/manager/biz/marketplace"
 	managerbizmonitor "github.com/ongridio/ongrid/internal/manager/biz/monitor"
+	managerbizmcp "github.com/ongridio/ongrid/internal/manager/biz/mcp"
 	managerbizsecret "github.com/ongridio/ongrid/internal/manager/biz/secret"
 	managerbizsetting "github.com/ongridio/ongrid/internal/manager/biz/setting"
 	managerbizskill "github.com/ongridio/ongrid/internal/manager/biz/skill"
@@ -115,6 +116,7 @@ import (
 	managerknowledgedata "github.com/ongridio/ongrid/internal/manager/data/knowledge/store"
 	managermarketplacedata "github.com/ongridio/ongrid/internal/manager/data/marketplace/store"
 	managermonitordata "github.com/ongridio/ongrid/internal/manager/data/monitor/store"
+	managermcpdata "github.com/ongridio/ongrid/internal/manager/data/mcp/store"
 	managersecretdata "github.com/ongridio/ongrid/internal/manager/data/secret/store"
 	managersettingdata "github.com/ongridio/ongrid/internal/manager/data/setting/store"
 	managerwebshelldata "github.com/ongridio/ongrid/internal/manager/data/webshell/store"
@@ -146,6 +148,7 @@ import (
 	managerservermonitor "github.com/ongridio/ongrid/internal/manager/server/monitor"
 	managerserverprom "github.com/ongridio/ongrid/internal/manager/server/prometheus"
 	managerserverreport "github.com/ongridio/ongrid/internal/manager/server/report"
+	managerservermcp "github.com/ongridio/ongrid/internal/manager/server/mcp"
 	managerserversecret "github.com/ongridio/ongrid/internal/manager/server/secret"
 	managerserversetting "github.com/ongridio/ongrid/internal/manager/server/setting"
 	managerserverskill "github.com/ongridio/ongrid/internal/manager/server/skill"
@@ -241,6 +244,7 @@ func main() {
 		managersettingdata.Migrate,
 		managermarketplacedata.Migrate,
 		managersecretdata.Migrate,
+		managermcpdata.Migrate,
 		managerapprovaldata.Migrate,
 		managermonitordata.Migrate,
 		managerwebshelldata.Migrate,
@@ -1770,6 +1774,10 @@ func main() {
 	// store installed skills (and future external-MCP clients) inject from.
 	secretUC := managerbizsecret.NewUsecase(managersecretdata.NewRepo(db))
 	secretHandler := managerserversecret.NewHandler(secretUC)
+	// HLD-018 MCP client: external MCP servers config + connect/list-tools.
+	// Reuses the credential vault (secretUC) for server auth injection.
+	mcpUC := managerbizmcp.NewUsecase(managermcpdata.NewRepo(db), secretUC, log.With(slog.String("comp", "mcp")))
+	mcpHandler := managerservermcp.NewHandler(mcpUC)
 	// HLD-017 propose-confirm inbox: human approval queue for dangerous
 	// actions (agent cloud-shell, etc.). Additive — empty until a producer
 	// proposes; producers register their execute-on-approve executor.
@@ -1986,6 +1994,7 @@ func main() {
 			integrationHandler.Register(protected)
 			marketplaceHandler.Register(protected)
 			secretHandler.Register(protected)
+			mcpHandler.Register(protected)
 			approvalHandler.Register(protected)
 			promProxyHandler.RegisterProtected(protected)
 			managerserveraudit.NewHandler(auditUC).Register(protected)
