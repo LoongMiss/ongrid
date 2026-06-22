@@ -723,6 +723,19 @@ func filterToolsForAgentRole(bag []basetool.BaseTool, agentDef *Agent, isCoordin
 		if viewerOnly && info.Class != "read" {
 			continue
 		}
+		// MCP tools (mcp__<server>__<tool>, HLD-018) are general-purpose
+		// touchpoints discovered at runtime — they can't be pre-listed in a
+		// persona's Tools whitelist, so treat them as always-in-scope for
+		// every persona (coordinator + workers). The viewerOnly check above
+		// already dropped non-read (untrusted) MCP tools for viewers; the
+		// blacklist below still applies.
+		if strings.HasPrefix(info.Name, "mcp__") {
+			if matchesAny(info.Name, blacklist) {
+				continue
+			}
+			out = append(out, t)
+			continue
+		}
 		// Coordinator-only tools survive the strip when we ARE the
 		// coordinator. They're always in scope for the coordinator
 		// regardless of any persona whitelist — control plane.

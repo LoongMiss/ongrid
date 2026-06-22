@@ -92,6 +92,48 @@ func (u *Usecase) Get(ctx context.Context, id uint64) (*model.Server, error) {
 // List returns all registered servers.
 func (u *Usecase) List(ctx context.Context) ([]*model.Server, error) { return u.repo.List(ctx) }
 
+// ListEnabled returns the enabled servers — boot connects to these to pull
+// tools and register them into the agent toolbag.
+func (u *Usecase) ListEnabled(ctx context.Context) ([]*model.Server, error) {
+	all, err := u.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*model.Server, 0, len(all))
+	for _, s := range all {
+		if s.Enabled {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// CallTool connects to the named server and invokes one tool, returning the
+// flattened text content. Used by the MCP tool adapter (trusted path) and by
+// the mcp_call approval executor (post-approval). Errors when the server is
+// unknown, unreachable, or the tool reports isError.
+func (u *Usecase) CallTool(ctx context.Context, serverName, toolName string, args map[string]any) (string, error) {
+	s, err := u.repo.GetByName(ctx, serverName)
+	if err != nil {
+		return "", err
+	}
+	cli, err := u.BuildClient(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	if err := cli.Initialize(ctx); err != nil {
+		return "", err
+	}
+	res, err := cli.CallTool(ctx, toolName, args)
+	if err != nil {
+		return "", err
+	}
+	if res.IsError {
+		return "", fmt.Errorf("mcp tool %s/%s reported error: %s", serverName, toolName, res.TextContent())
+	}
+	return res.TextContent(), nil
+}
+
 // BuildClient constructs an MCP client for s, resolving the referenced
 // credential (if any) and expanding {{field}} placeholders in the header
 // template into concrete HTTP headers. stdio transport is not supported yet.

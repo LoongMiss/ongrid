@@ -117,6 +117,7 @@ import (
 	managermarketplacedata "github.com/ongridio/ongrid/internal/manager/data/marketplace/store"
 	managermonitordata "github.com/ongridio/ongrid/internal/manager/data/monitor/store"
 	managermcpdata "github.com/ongridio/ongrid/internal/manager/data/mcp/store"
+	mcpclient "github.com/ongridio/ongrid/internal/pkg/mcpclient"
 	managersecretdata "github.com/ongridio/ongrid/internal/manager/data/secret/store"
 	managersettingdata "github.com/ongridio/ongrid/internal/manager/data/setting/store"
 	managerwebshelldata "github.com/ongridio/ongrid/internal/manager/data/webshell/store"
@@ -1818,6 +1819,20 @@ func main() {
 		})
 		return string(out), nil
 	})
+	// HLD-018 P2: mcp_call executor — on approve, connect the server and run
+	// the tool. Trusted servers skip this and run synchronously in the tool.
+	approvalUC.RegisterExecutor("mcp_call", func(ctx context.Context, payloadJSON string) (string, error) {
+		var p mcpCallPayload
+		if err := json.Unmarshal([]byte(payloadJSON), &p); err != nil {
+			return "", err
+		}
+		out, err := mcpUC.CallTool(ctx, p.Server, p.Tool, p.Arguments)
+		if err != nil {
+			return "", err
+		}
+		res, _ := json.Marshal(map[string]any{"stdout": out, "exit_code": 0})
+		return string(res), nil
+	})
 	toolsReg.SetCloudBashProposer(cloudBashProposerShim{uc: approvalUC})
 	// The chat runtime's tool bag was compiled far above (line ~1274)
 	// BEFORE the cloud_bash proposer existed, so that BuildBaseTools didn't
@@ -1843,6 +1858,47 @@ func main() {
 		// cloud_bash auto-injects the credentials an active skill was bound
 		// to at install time (design-time binding, no run-time choice).
 		chatRT.SetCredentialBinder(mpUC)
+		// HLD-018 P2: connect each enabled MCP server, pull its tools, and
+		// bolt each onto the toolbag as mcp__<server>__<tool>. Trusted
+		// servers' tools run synchronously; others queue to the approval
+		// inbox. Best-effort per server — a slow/unreachable server is logged
+		// and skipped, never blocks boot.
+		mcpDeps := aiopstoolsdec.Deps{
+			Timeout:    90 * time.Second,
+			Limiter:    aiopstoolsdec.NewTokenBucketLimiter(0),
+			Registerer: reg,
+		}
+		mcpCaller := mcpCallerShim{uc: mcpUC}
+		mcpProposer := mcpProposerShim{uc: approvalUC}
+		if servers, err := mcpUC.ListEnabled(rootCtx); err == nil {
+			var mcpTools []aiopstoolsbase.BaseTool
+			for _, srv := range servers {
+				connCtx, cancel := context.WithTimeout(rootCtx, 15*time.Second)
+				cli, berr := mcpUC.BuildClient(connCtx, srv)
+				if berr == nil {
+					berr = cli.Initialize(connCtx)
+				}
+				var mtools []mcpclient.Tool
+				if berr == nil {
+					mtools, berr = cli.ListTools(connCtx)
+				}
+				cancel()
+				if berr != nil {
+					log.Warn("mcp: connect failed, skipping server", slog.String("server", srv.Name), slog.Any("err", berr))
+					continue
+				}
+				for _, mt := range mtools {
+					mcpTools = append(mcpTools, aiopstoolsdec.Wrap(
+						aiopstools.NewMCPTool(srv.Name, mt.Name, mt.Description, mt.InputSchema, srv.Trusted, mcpCaller, mcpProposer, log),
+						mcpDeps))
+				}
+				log.Info("mcp: server connected", slog.String("server", srv.Name), slog.Int("tools", len(mtools)), slog.Bool("trusted", srv.Trusted))
+			}
+			if len(mcpTools) > 0 {
+				chatRT.AppendToolBag(mcpTools)
+				log.Info("mcp tools bolted onto chat runtime bag", slog.Int("mcp_tool_count", len(mcpTools)), slog.Int("tool_count", chatRT.ToolCount()))
+			}
+		}
 	}
 	if secretbox.KeyIsWeak() {
 		log.Warn("secret vault: ONGRID_SECRET_KEY unset — credentials encrypted with an INSECURE built-in key; set ONGRID_SECRET_KEY (32+ random chars) for real at-rest protection")
@@ -3215,6 +3271,47 @@ func (s cloudBashProposerShim) Propose(ctx context.Context, command string, cred
 		Title:      title,
 		Summary:    strings.Join(credentials, ", "), // plain names; card shows them
 		Payload:    cloudBashPayload{Command: command, Credentials: credentials},
+		Source:     "agent",
+		SessionID:  sessionID,
+		ProposedBy: userID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return a.ID, nil
+}
+
+// mcpCallPayload is the approval payload for a queued MCP tool call (HLD-018
+// P2). Server/Tool/Arguments drive the executor; Command is a human-readable
+// one-liner the inline approval card shows (reuses the cloud_bash card).
+type mcpCallPayload struct {
+	Server    string         `json:"server"`
+	Tool      string         `json:"tool"`
+	Arguments map[string]any `json:"arguments,omitempty"`
+	Command   string         `json:"command"`
+}
+
+// mcpCallerShim is the trusted-server synchronous path for MCP tools.
+type mcpCallerShim struct{ uc *managerbizmcp.Usecase }
+
+func (s mcpCallerShim) CallMCPTool(ctx context.Context, server, tool string, args map[string]any) (string, error) {
+	return s.uc.CallTool(ctx, server, tool, args)
+}
+
+// mcpProposerShim queues an MCP call into the human approval inbox (default,
+// untrusted path) — same propose-confirm model as cloud_bash.
+type mcpProposerShim struct{ uc *managerbizapproval.Usecase }
+
+func (s mcpProposerShim) ProposeMCPCall(ctx context.Context, server, tool string, args map[string]any, sessionID string, userID uint64) (string, error) {
+	argsJSON, _ := json.Marshal(args)
+	cmd := server + " / " + tool + " " + string(argsJSON)
+	if len(cmd) > 200 {
+		cmd = cmd[:200] + "…"
+	}
+	a, err := s.uc.Propose(ctx, managerbizapproval.ProposeInput{
+		Kind:       "mcp_call",
+		Title:      cmd,
+		Payload:    mcpCallPayload{Server: server, Tool: tool, Arguments: args, Command: cmd},
 		Source:     "agent",
 		SessionID:  sessionID,
 		ProposedBy: userID,
