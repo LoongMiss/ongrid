@@ -411,6 +411,21 @@ export default function ChatThreadPage() {
     return `tool-card-${toolCallId}`;
   }
 
+  // True while a cloud_bash approval card is on screen awaiting the user's
+  // decision (its tool card still carries the synthetic pending_approval
+  // blob). Once approved/rejected the blocked tool returns and tool_end
+  // replaces the blob, so this flips back to false and the normal thinking
+  // indicator resumes for the continuation.
+  const awaitingApproval =
+    submitting &&
+    messages.some(
+      (m) =>
+        m.kind === 'tool_card' &&
+        m.tool_call?.result != null &&
+        typeof m.tool_call.result === 'object' &&
+        (m.tool_call.result as { status?: string }).status === 'pending_approval',
+    );
+
   return (
     <main className="flex flex-1 flex-col overflow-hidden">
         <PageHeader
@@ -439,7 +454,18 @@ export default function ChatThreadPage() {
                 />
               ))
             )}
-            {submitting && <ThinkingIndicator />}
+            {submitting &&
+              (awaitingApproval ? (
+                // HLD-021: cloud_bash blocks server-side while it waits for the
+                // user's approve/reject, so the turn is still "in flight" — but
+                // it isn't thinking, it's waiting on the human. Show that
+                // instead of a misleading "Analyzing…" spinner next to the card.
+                <div className="flex items-center gap-2 text-[11px] text-zinc-600">
+                  <span>{tr('等待你确认…', 'Waiting for your confirmation…')}</span>
+                </div>
+              ) : (
+                <ThinkingIndicator />
+              ))}
             {error && (
               <div
                 role="alert"
