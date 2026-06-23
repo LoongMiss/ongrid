@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Cloud, Cpu, Wrench, RefreshCw, Play, Search, Package } from 'lucide-react';
+import { Cloud, Cpu, Wrench, RefreshCw, Play, Search, Puzzle } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { listSkills, localizedSkill, type SkillClass, type SkillScope, type SkillSummary } from '@/api/skills';
 import { ApiError } from '@/api/client';
@@ -42,12 +42,12 @@ export default function SkillsPage() {
     <main className="anim-fade flex flex-1 flex-col overflow-hidden">
       <PageHeader
         title={tr('技能', 'Skills')}
-        subtitle={tr('LLM 当前可见的能力，以及安装 / 管理外部技能', 'Capabilities the LLM can use — plus installing / managing external skills')}
+        subtitle={tr('LLM 当前可见的能力，以及安装 / 管理扩展', 'Capabilities the LLM can use — plus installing / managing extensions')}
         extra={
           isAdmin ? (
             <div className="-mb-4 flex items-center gap-1">
               <TabButton active={tab === 'catalog'} onClick={() => setTab('catalog')} icon={<Wrench size={14} />} label={tr('技能目录', 'Catalog')} />
-              <TabButton active={tab === 'install'} onClick={() => setTab('install')} icon={<Package size={14} />} label={tr('技能市场', 'Marketplace')} />
+              <TabButton active={tab === 'install'} onClick={() => setTab('install')} icon={<Puzzle size={14} />} label={tr('扩展', 'Extensions')} />
             </div>
           ) : undefined
         }
@@ -295,7 +295,7 @@ function SkillRow({ skill, onView }: { skill: SkillSummary; onView(): void }) {
           {skill.source && skill.source !== 'builtin' && (
             <span
               className="rounded bg-violet-900/40 px-1 text-[9px] font-medium text-violet-300"
-              title={tr(`来自市场安装（${skill.source}）`, `installed from marketplace (${skill.source})`)}
+              title={tr(`作为扩展安装（${skill.source}）`, `installed as extension (${skill.source})`)}
             >
               {tr('已安装', 'installed')}
             </span>

@@ -1864,6 +1864,34 @@ func main() {
 		res, _ := json.Marshal(map[string]any{"stdout": out, "exit_code": 0})
 		return string(res), nil
 	})
+	// Conversational skill install (extensions): on approve, fetch + install
+	// the pack from the user-provided source, then summarize what landed (incl.
+	// credential slots, so the agent can next prompt to bind a credential).
+	// Class=destructive — a skill can ship a binary cloud_bash later runs, so
+	// this only runs after a human approves. The approval IS the authorization,
+	// so the install runs with admin authority; installed_by = proposing user.
+	approvalUC.RegisterExecutor("install_skill", func(ctx context.Context, payloadJSON string) (string, error) {
+		var p installSkillPayload
+		if err := json.Unmarshal([]byte(payloadJSON), &p); err != nil {
+			return "", err
+		}
+		src := managerbizmarketplace.Source{
+			Type: managerbizmarketplace.SourceType(p.Type),
+			URL:  p.URL,
+			Ref:  p.Ref,
+		}
+		res, err := mpUC.Install(ctx, managerbizmarketplace.Caller{UserID: p.UserID, Role: "admin"}, src)
+		if err != nil {
+			return "", err
+		}
+		out, _ := json.Marshal(map[string]any{
+			"installed":        res.Pack.PackID,
+			"version":          res.Pack.Version,
+			"credential_slots": res.Capabilities.Summary.CredentialSlots,
+			"warnings":         res.Warnings,
+		})
+		return string(out), nil
+	})
 	toolsReg.SetCloudBashProposer(cloudBashProposerShim{uc: approvalUC})
 	// The chat runtime's tool bag was compiled far above (line ~1274)
 	// BEFORE the cloud_bash proposer existed, so that BuildBaseTools didn't
@@ -1883,8 +1911,9 @@ func main() {
 		}
 		chatRT.AppendToolBag([]aiopstoolsbase.BaseTool{
 			aiopstoolsdec.Wrap(aiopstools.NewCloudBashTool(cloudBashProposerShim{uc: approvalUC}, log), cbDeps),
+			aiopstoolsdec.Wrap(aiopstools.NewInstallSkillTool(installSkillProposerShim{uc: approvalUC}, log), cbDeps),
 		})
-		log.Info("cloud_bash bolted onto chat runtime bag", slog.Int("tool_count", chatRT.ToolCount()))
+		log.Info("cloud_bash + install_skill bolted onto chat runtime bag", slog.Int("tool_count", chatRT.ToolCount()))
 		// HLD-017: wire the active-skill → bound-credentials resolver so
 		// cloud_bash auto-injects the credentials an active skill was bound
 		// to at install time (design-time binding, no run-time choice).
@@ -2828,6 +2857,11 @@ var coordinatorToolNames = []string{
 	// inbox (rendered inline in chat). So the coordinator can offer "run
 	// this in the cloud" without violating the dispatch-only rule.
 	"cloud_bash",
+	// install_skill is safe on the coordinator for the same reason as
+	// cloud_bash: it never installs directly — every call only QUEUES an
+	// approval. Lets the agent extend itself ("install this skill from <url>")
+	// with a human approving the actual install.
+	"install_skill",
 	"draft_config_change",
 	"apply_config_change",
 }
@@ -3328,6 +3362,40 @@ func (s cloudBashProposerShim) Propose(ctx context.Context, command string, cred
 		Title:      title,
 		Summary:    strings.Join(credentials, ", "), // plain names; card shows them
 		Payload:    cloudBashPayload{Command: command, Credentials: credentials, SessionID: sessionID},
+		Source:     "agent",
+		SessionID:  sessionID,
+		ProposedBy: userID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return a.ID, nil
+}
+
+// installSkillPayload is the approval payload for a queued conversational
+// skill install (install_skill tool). The executor fetches + installs the
+// pack from the user-provided source after a human approves.
+type installSkillPayload struct {
+	URL    string `json:"url"`
+	Type   string `json:"type"` // "git" | "tarball"
+	Ref    string `json:"ref,omitempty"`
+	UserID uint64 `json:"user_id,omitempty"`
+}
+
+// installSkillProposerShim queues a skill install into the human approval
+// inbox — same propose-confirm model as cloud_bash.
+type installSkillProposerShim struct{ uc *managerbizapproval.Usecase }
+
+func (s installSkillProposerShim) ProposeInstall(ctx context.Context, url, sourceType, ref, sessionID string, userID uint64) (string, error) {
+	title := "install skill: " + url
+	if len(title) > 120 {
+		title = title[:120] + "…"
+	}
+	a, err := s.uc.Propose(ctx, managerbizapproval.ProposeInput{
+		Kind:       "install_skill",
+		Title:      title,
+		Summary:    sourceType,
+		Payload:    installSkillPayload{URL: url, Type: sourceType, Ref: ref, UserID: userID},
 		Source:     "agent",
 		SessionID:  sessionID,
 		ProposedBy: userID,
