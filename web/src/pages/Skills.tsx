@@ -1,13 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { Cloud, Cpu, Wrench, RefreshCw, Play, Search, Puzzle } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Cloud, Cpu, Wrench, RefreshCw, Play, Search, Puzzle, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { listSkills, localizedSkill, type SkillClass, type SkillScope, type SkillSummary } from '@/api/skills';
+import { createSession } from '@/api/chat';
 import { ApiError } from '@/api/client';
 import { Modal } from '@/components/Modal';
 import { useI18n } from '@/i18n/locale';
 import { useAuth } from '@/store/auth';
-import { PageHeader } from '@/components/ui';
+import { Button, PageHeader } from '@/components/ui';
 
 // Lazy-load the install/uninstall surface so the default Catalog tab
 // doesn't pull in the marketplace bundle until the operator actually
@@ -54,6 +55,7 @@ export default function SkillsPage() {
       />
       {tab === 'install' ? (
         <div className="flex-1 overflow-auto px-6 py-4">
+          <InstallChatBar />
           <Suspense fallback={<div className="flex h-40 items-center justify-center text-sm text-zinc-500">{tr('加载中…', 'Loading…')}</div>}>
             <InstallTab />
           </Suspense>
@@ -62,6 +64,60 @@ export default function SkillsPage() {
         <CatalogTab />
       )}
     </main>
+  );
+}
+
+// InstallChatBar — conversational install entry on the Extensions tab. Mirrors
+// the Home composer: it doesn't run the chat inline (so the human-approval card
+// + streaming live in the real thread), it opens a fresh session pre-seeded with
+// the user's source/intent so the agent's install_skill tool takes it from there.
+function InstallChatBar() {
+  const { tr } = useI18n();
+  const navigate = useNavigate();
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const start = async () => {
+    const v = draft.trim();
+    if (!v || busy) return;
+    setBusy(true);
+    try {
+      const session = await createSession({ title: tr('安装扩展', 'Install extension'), agent_id: 'default' });
+      const prompt = tr(
+        `帮我安装一个扩展。来源或需求：${v}`,
+        `Help me install an extension. Source or request: ${v}`,
+      );
+      navigate(`/chat/${session.id}`, { state: { initialPrompt: prompt } });
+    } catch {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mb-4 rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-3">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+        <Sparkles size={12} className="text-indigo-400" />
+        {tr('对话式安装', 'Install by chat')}
+      </div>
+      <p className="mb-2 text-[11px] text-zinc-500">
+        {tr(
+          '贴一个技能源地址（git / tarball / skills.sh），或直接描述你想要的能力，交给助手装。安装前需你确认。',
+          'Paste a skill source (git / tarball / skills.sh), or just describe the capability you want — the assistant installs it, with your approval first.',
+        )}
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void start();
+          }}
+          placeholder={tr('例如：帮我装 https://github.com/owner/skill', 'e.g. install https://github.com/owner/skill')}
+          className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none"
+        />
+        <Button onClick={() => void start()} disabled={busy || !draft.trim()} variant="primary">
+          {tr('交给助手', 'Ask assistant')}
+        </Button>
+      </div>
+    </div>
   );
 }
 
