@@ -283,6 +283,18 @@ func (s *Service) runWithKernel(ctx context.Context, caller Caller, sessionID st
 		return nil, err
 	}
 
+	// HLD-021: detach the chat turn from the HTTP request lifecycle. A turn now
+	// routinely blocks for minutes inside cloud_bash waiting on a human
+	// approval; without this a browser refresh / SSE drop cancels the request
+	// ctx and kills the whole in-flight turn (pending approval orphaned, no
+	// continuation). WithoutCancel keeps the request's values (auth/tenant/
+	// emit) but severs cancellation, so the turn runs to completion and
+	// persists regardless of the client connection. There is no client-side
+	// stop to preserve (the SPA never wires the abort signal); per-tool
+	// timeouts + eino max-steps still bound the work. SSE writes to a dead
+	// connection are swallowed by writeSSE.
+	ctx = context.WithoutCancel(ctx)
+
 	// Graph kernel — only when explicitly enabled AND wired.
 	if s.kernel == KernelGraph && s.runtime != nil {
 		return s.runGraph(ctx, sess, content, emit, opts)

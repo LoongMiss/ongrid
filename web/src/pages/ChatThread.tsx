@@ -12,6 +12,7 @@ import {
   type LLMProvider,
   type Mention,
 } from '@/api/chat';
+import { listApprovals, type Approval } from '@/api/approvals';
 import { invalidateChatSessions, useChatSessions } from '@/store/chatSessions';
 import { usePermissions } from '@/store/me';
 import { useModelSelection } from '@/store/modelSelection';
@@ -113,20 +114,37 @@ export default function ChatThreadPage() {
     const fingerprintRef = { current: '' };
     const refetch = (initial: boolean) => {
       if (initial) setLoading(true);
-      getMessages(sessionId)
-        .then((r) => {
+      Promise.all([
+        getMessages(sessionId),
+        // HLD-021: a turn can be blocked server-side waiting on a human
+        // approval. The live approve/reject card is driven by an SSE frame
+        // that's gone after a refresh, so reconstruct it from the inbox —
+        // any still-pending cloud_bash approval for THIS session is rendered
+        // as a card again so the user can decide. Non-admins 403 here → []
+        // (the inbox is admin-gated; the card just won't reappear for them).
+        listApprovals('pending').catch(() => ({ items: [] as Approval[] })),
+      ])
+        .then(([r, ap]) => {
           if (cancelled) return;
           if (!initial && submittingRef.current) return;
           const items = r.items ?? [];
+          const pending = (ap.items ?? []).filter(
+            (a) => a.session_id === sessionId && a.kind === 'cloud_bash',
+          );
+          const merged = pending.length
+            ? [...items, ...pending.map(approvalCardMessage)]
+            : items;
           // Cheap content fingerprint — length + last id + last content
-          // hash. Avoids JSON.stringify on every poll. False negatives
-          // are fine (we re-render unnecessarily once) but a tight
-          // fingerprint prevents the steady-state "every-5s rerender".
+          // hash + the pending-approval id set. Avoids JSON.stringify on
+          // every poll. False negatives are fine (we re-render unnecessarily
+          // once) but a tight fingerprint prevents the steady-state rerender.
           const last = items[items.length - 1];
-          const fp = `${items.length}|${last?.id ?? ''}|${last?.content?.length ?? 0}`;
+          const fp = `${items.length}|${last?.id ?? ''}|${last?.content?.length ?? 0}|${pending
+            .map((a) => a.id)
+            .join(',')}`;
           if (!initial && fp === fingerprintRef.current) return;
           fingerprintRef.current = fp;
-          setMessages(items);
+          setMessages(merged);
         })
         .catch(() => {
           if (cancelled || !initial) return;
@@ -409,6 +427,34 @@ export default function ChatThreadPage() {
   // distinct from real message rows even when both happen to be UUID.
   function toolCardId(toolCallId: string): string {
     return `tool-card-${toolCallId}`;
+  }
+
+  // approvalCardMessage rebuilds a pending cloud_bash approval (from the
+  // inbox) into the same synthetic tool card the live SSE path renders, so a
+  // user who refreshed mid-wait still sees approve/reject. PendingApprovalCard
+  // self-reconciles via getApproval, so a since-decided one resolves cleanly.
+  function approvalCardMessage(a: Approval): ChatMessage {
+    let command = '';
+    let credentials: string[] = [];
+    try {
+      const p = JSON.parse(a.payload) as { command?: string; credentials?: string[] };
+      command = p.command ?? '';
+      credentials = Array.isArray(p.credentials) ? p.credentials.filter(Boolean) : [];
+    } catch {
+      /* payload not JSON — card recovers command via getApproval on mount */
+    }
+    return {
+      id: `approval-${a.id}`,
+      role: 'tool',
+      kind: 'tool_card',
+      tool_call: {
+        id: a.id,
+        name: 'cloud_bash',
+        status: 'pending',
+        arguments: command ? { command } : undefined,
+        result: { status: 'pending_approval', approval_id: a.id, command, credentials },
+      },
+    };
   }
 
   // True while a cloud_bash approval card is on screen awaiting the user's
