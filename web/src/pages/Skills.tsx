@@ -10,6 +10,7 @@ import { ChatInput, type ModelSelection } from '@/components/ChatInput';
 import { useModelSelection } from '@/store/modelSelection';
 import { useI18n } from '@/i18n/locale';
 import { useAuth } from '@/store/auth';
+import { toolSkill, skillLabel, orderedSkillKeys } from '@/lib/toolSkill';
 import { PageHeader } from '@/components/ui';
 
 // Lazy-load the install/uninstall surface so the default Catalog tab
@@ -160,7 +161,7 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
 }
 
 function CatalogTab() {
-  const { tr } = useI18n();
+  const { tr, locale } = useI18n();
   const [items, setItems] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -191,13 +192,10 @@ function CatalogTab() {
     fetchSkills();
   }, [fetchSkills]);
 
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of items) {
-      if (s.category) set.add(s.category);
-    }
-    return Array.from(set).sort();
-  }, [items]);
+  // Group by the single canonical skill (shared with the flow palette via
+  // toolSkill) — not the fine-grained backend category, which we no longer
+  // surface as a separate concept.
+  const skills = useMemo(() => orderedSkillKeys(items.map((s) => toolSkill(s.name))), [items]);
 
   // Scope defaults to 'host' on the backend when omitted (skillcore.EffectiveScope),
   // so for filter purposes we treat undefined as 'host'.
@@ -216,7 +214,7 @@ function CatalogTab() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items.filter((s) => {
-      if (category && s.category !== category) return false;
+      if (category && toolSkill(s.name) !== category) return false;
       if (scope && effectiveScope(s) !== scope) return false;
       if (!q) return true;
       return (
@@ -262,20 +260,20 @@ function CatalogTab() {
                 />
               </div>
             </div>
-            {categories.length > 0 && (
+            {skills.length > 0 && (
               <div className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
-                <span className="text-zinc-500">{tr('分类', 'Category')}</span>
+                <span className="text-zinc-500">{tr('技能', 'Skill')}</span>
                 <div className="flex flex-wrap gap-1">
                   <CategoryChip
                     active={category === ''}
                     label={tr('全部', 'All')}
                     onClick={() => setCategory('')}
                   />
-                  {categories.map((c) => (
+                  {skills.map((c) => (
                     <CategoryChip
                       key={c}
                       active={category === c}
-                      label={c}
+                      label={skillLabel(c, locale === 'zh-CN')}
                       onClick={() => setCategory(c)}
                     />
                   ))}
@@ -317,16 +315,25 @@ function CatalogTab() {
                     <th className="px-4 py-2.5 text-left">{tr('名称', 'Name')}</th>
                     <th className="px-4 py-2.5 text-left">{tr('运行位置', 'Runs on')}</th>
                     <th className="px-4 py-2.5 text-left">{tr('类别', 'Class')}</th>
-                    <th className="px-4 py-2.5 text-left">{tr('分类', 'Category')}</th>
                     <th className="px-4 py-2.5 text-left">{tr('描述', 'Description')}</th>
                     <th className="px-4 py-2.5 text-right">{tr('操作', 'Actions')}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/40">
-                  {filtered.map((skill) => (
-                    <SkillRow key={skill.key} skill={skill} onView={() => setViewing(skill)} />
-                  ))}
-                </tbody>
+                {orderedSkillKeys(filtered.map((s) => toolSkill(s.name))).map((sk) => (
+                  <tbody key={sk} className="divide-y divide-zinc-800/40">
+                    <tr className="bg-zinc-950/40">
+                      <td colSpan={5} className="px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                        {skillLabel(sk, locale === 'zh-CN')}
+                        <span className="ml-1.5 text-zinc-600">{filtered.filter((s) => toolSkill(s.name) === sk).length}</span>
+                      </td>
+                    </tr>
+                    {filtered
+                      .filter((s) => toolSkill(s.name) === sk)
+                      .map((skill) => (
+                        <SkillRow key={skill.key} skill={skill} onView={() => setViewing(skill)} />
+                      ))}
+                  </tbody>
+                ))}
               </table>
             </div>
           )}
@@ -386,15 +393,6 @@ function SkillRow({ skill, onView }: { skill: SkillSummary; onView(): void }) {
       </td>
       <td className="whitespace-nowrap px-4 py-2.5">
         <ClassBadge value={skill.class} />
-      </td>
-      <td className="whitespace-nowrap px-4 py-2.5">
-        {skill.category ? (
-          <span className="rounded-md border border-zinc-800 bg-zinc-950/40 px-1.5 py-0.5 text-[10px] text-zinc-400">
-            {skill.category}
-          </span>
-        ) : (
-          <span className="text-zinc-600">—</span>
-        )}
       </td>
       {/* Description column is the truncate-absorber — w-full + max-w-0
           forces it to take all remaining horizontal space and clamp

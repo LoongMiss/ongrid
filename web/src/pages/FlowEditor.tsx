@@ -60,6 +60,7 @@ import {
 } from '@/api/flows';
 import { useI18n } from '@/i18n/locale';
 import { useAuth } from '@/store/auth';
+import { toolSkill, skillLabel, orderedSkillKeys } from '@/lib/toolSkill';
 
 // ---------- node visual spec ----------------------------------------------
 
@@ -81,36 +82,6 @@ const NODE_META: Record<FlowNodeType, { icon: typeof Bot; color: string; zh: str
 // addNode('tool', {config:{tool}}).
 const BASE_NODE_TYPES: FlowNodeType[] = ['trigger.manual', 'trigger.alert_fired', 'trigger.cron', 'agent', 'llm', 'condition', 'notify', 'set', 'transform'];
 
-const CATEGORY_ORDER = ['observability', 'host', 'topology', 'incident', 'sre', 'knowledge', 'control', 'other'];
-const CATEGORY_LABEL: Record<string, { zh: string; en: string }> = {
-  observability: { zh: '可观测（指标/日志/链路）', en: 'Observability' },
-  host: { zh: '主机直达', en: 'Host' },
-  topology: { zh: '拓扑', en: 'Topology' },
-  incident: { zh: '告警 / 事件', en: 'Incidents' },
-  sre: { zh: '集群 / SRE', en: 'Fleet / SRE' },
-  knowledge: { zh: '知识 / 读码', en: 'Knowledge' },
-  control: { zh: '控制面', en: 'Control' },
-  other: { zh: '其他', en: 'Other' },
-};
-
-// toolGroup buckets a tool into a visual palette group (a "skill" — the
-// organising layer above atomic tools; the node model is unchanged). MCP
-// tools group by their SERVER (mcp__<server>__… → that server is its own
-// bundle, e.g. the k8s server = the k8s tools); everything else keeps its
-// backend category. Display-only — no effect on what the node references or
-// how it runs.
-function toolGroup(name: string, category?: string): string {
-  if (name.startsWith('mcp__')) return 'mcp:' + (name.split('__')[1] || 'mcp');
-  return category || 'other';
-}
-
-// groupLabel resolves a group key to a display label. MCP server groups are
-// dynamic ("MCP · <server>"); built-in categories use the fixed map.
-function groupLabel(key: string, locale: string): string {
-  if (key.startsWith('mcp:')) return 'MCP · ' + key.slice(4);
-  const l = CATEGORY_LABEL[key];
-  return l ? (locale === 'zh-CN' ? l.zh : l.en) : key;
-}
 
 type CanvasData = {
   flowType: FlowNodeType;
@@ -1108,20 +1079,13 @@ function ToolPalette({
   const byCat = useMemo(() => {
     const m = new Map<string, FlowToolMeta[]>();
     for (const t of filtered) {
-      const c = toolGroup(t.name, t.category);
+      const c = toolSkill(t.name);
       if (!m.has(c)) m.set(c, []);
       m.get(c)!.push(t);
     }
     return m;
   }, [filtered]);
-  // Fixed built-in categories first (curated order), then any dynamic groups
-  // (MCP servers, or a future unknown category) appended alphabetically — so
-  // nothing is ever silently dropped from the palette.
-  const cats = useMemo(() => {
-    const known = CATEGORY_ORDER.filter((c) => byCat.has(c));
-    const extra = [...byCat.keys()].filter((c) => !CATEGORY_ORDER.includes(c)).sort();
-    return [...known, ...extra];
-  }, [byCat]);
+  const cats = useMemo(() => orderedSkillKeys(byCat.keys()), [byCat]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col border-t border-zinc-800">
@@ -1149,7 +1113,7 @@ function ToolPalette({
           cats.map((cat) => (
             <div key={cat} className="mb-1">
               <div className="px-2 pt-2 text-[10px] uppercase tracking-wide text-zinc-600">
-                {groupLabel(cat, locale)}
+                {skillLabel(cat, locale === 'zh-CN')}
               </div>
               {byCat.get(cat)!.map((t) => (
                 <button
