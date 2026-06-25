@@ -63,6 +63,7 @@ import {
 import { useI18n } from '@/i18n/locale';
 import { useAuth } from '@/store/auth';
 import { toolGroupKey, groupTag, groupTitle, orderedGroupKeys } from '@/lib/toolSkill';
+import { paramDescEn } from '@/lib/paramDescEn';
 
 // ---------- node visual spec ----------------------------------------------
 
@@ -857,7 +858,7 @@ export default function FlowEditorPage() {
                   {testing ? tr('试跑中…', 'Testing…') : tr('试跑此节点（看真实输出）', 'Test this node (see real output)')}
                 </button>
                 {testErr && (
-                  <div className="mt-1 break-all rounded-md border border-red-900/50 bg-red-950/30 px-2 py-1 text-[11px] text-red-400">{testErr}</div>
+                  <div title={testErr} className="mt-1 break-all rounded-md border border-red-900/50 bg-red-950/30 px-2 py-1 text-[11px] text-red-400">{friendlyFlowError(testErr, tr)}</div>
                 )}
                 {!testErr && testOut[selected.id] !== undefined && (
                   <div className="mt-1 rounded-md border border-violet-900/40 bg-violet-950/20 p-2">
@@ -948,7 +949,7 @@ export default function FlowEditorPage() {
                         <RunStatusChip status={n.status} />
                       </div>
                     </div>
-                    {n.error && <div className="mt-1 break-all text-[11px] text-red-400">{n.error}</div>}
+                    {n.error && <div title={n.error} className="mt-1 break-all text-[11px] text-red-400">{friendlyFlowError(n.error, tr)}</div>}
                     <details className="mt-1">
                       <summary className="cursor-pointer text-[11px] text-zinc-600">{tr('输入 / 输出', 'Input / output')}</summary>
                       <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-950 p-1.5 text-[10px] text-zinc-500">
@@ -958,7 +959,7 @@ export default function FlowEditorPage() {
                   </div>
                 ))}
                 {activeRun.run.error && (
-                  <div className="rounded-md border border-red-900/50 bg-red-950/30 p-2 text-[11px] text-red-400">{activeRun.run.error}</div>
+                  <div title={activeRun.run.error} className="rounded-md border border-red-900/50 bg-red-950/30 p-2 text-[11px] text-red-400">{friendlyFlowError(activeRun.run.error, tr)}</div>
                 )}
               </div>
             )}
@@ -1275,7 +1276,10 @@ function ToolArgsForm({
                 <span className="ml-1 text-[10px] text-zinc-600">{tr('可选', 'optional')}</span>
               )}
               {typeBadge && <span className="ml-1 rounded bg-zinc-800 px-1 text-[9px] text-zinc-500">{typeBadge}</span>}
-              {spec.description ? <span className="ml-1 text-zinc-600">— {spec.description}</span> : null}
+              {(() => {
+                const desc = locale === 'en-US' ? paramDescEn[toolName]?.[key] ?? spec.description : spec.description;
+                return desc ? <span className="ml-1 text-zinc-600">— {desc}</span> : null;
+              })()}
             </span>
             {isEnum ? (
               <select
@@ -1500,6 +1504,30 @@ function friendlyFieldLabel(path: string, locale: string): string {
     if (last && Number(last[0]) > 0) label += ` #${Number(last[0]) + 1}`;
   }
   return label;
+}
+
+// friendlyFlowError turns a raw backend node error into a clear, localized
+// hint when it's a recognizable shape. The classic one: a Go json type
+// mismatch (e.g. a single number wired into an array field) — opaque to users.
+function friendlyFlowError(raw: string, tr: (zh: string, en: string) => string): string {
+  if (!raw) return raw;
+  const m = raw.match(/cannot unmarshal (\w+) into Go struct field \S+\.(\w+) of type (\S+)/);
+  if (m) {
+    const got = m[1];
+    const field = m[2];
+    const want = m[3];
+    if (want.startsWith('[]')) {
+      return tr(
+        `参数「${field}」需要数组（列表），但收到的是单个 ${got}。用 [ … ] 包一层——例如把 {{…}} 改成 [{{…}}]。`,
+        `Param "${field}" expects an array, but got a single ${got}. Wrap it in [ … ] — e.g. change {{…}} to [{{…}}].`,
+      );
+    }
+    return tr(
+      `参数「${field}」的类型应为 ${want}，但收到的是 ${got}。检查该字段填的值或 {{…}} 引用。`,
+      `Param "${field}" should be ${want} but got ${got}. Check the value or {{…}} ref in that field.`,
+    );
+  }
+  return raw;
 }
 
 // friendlyRef decodes a whole {{...}} reference into "节点名 › 字段名", or null
