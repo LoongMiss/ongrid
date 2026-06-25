@@ -645,9 +645,9 @@ export default function FlowEditorPage() {
             setFlow({ ...flow, name: e.target.value });
             setDirty(true);
           }}
-          className="w-64 rounded-md border border-transparent bg-transparent px-2 py-1 text-[14px] font-medium text-zinc-100 outline-none focus:border-zinc-700"
+          className="min-w-[8rem] max-w-[24rem] rounded-md border border-transparent bg-transparent px-2 py-1 text-[14px] font-medium text-zinc-100 outline-none [field-sizing:content] focus:border-zinc-700"
         />
-        <span className="text-[11px] text-zinc-600">v{flow.version}</span>
+        <span className="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500">v{flow.version}</span>
         {dirty && <span className="text-[11px] text-amber-500">{tr('未保存', 'Unsaved')}</span>}
         <div className="flex-1" />
         {error && <span className="max-w-md truncate text-[12px] text-red-400">{error}</span>}
