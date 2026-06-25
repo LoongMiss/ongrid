@@ -3,7 +3,7 @@
 // create / open / run / toggle / delete.
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Play, Plus, Trash2, Workflow as WorkflowIcon } from 'lucide-react';
+import { Play, Plus, Search, Trash2, Workflow as WorkflowIcon } from 'lucide-react';
 
 import { createFlow, deleteFlow, listFlows, runFlow, toggleFlow, type Flow } from '@/api/flows';
 import { useI18n } from '@/i18n/locale';
@@ -23,6 +23,13 @@ export default function FlowsPage() {
   const [newName, setNewName] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
   const [notice, setNotice] = useState('');
+  const [search, setSearch] = useState('');
+
+  const shown = items.filter((f) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return f.name.toLowerCase().includes(q) || (f.description ?? '').toLowerCase().includes(q);
+  });
 
   const refresh = useCallback(async () => {
     try {
@@ -111,6 +118,18 @@ export default function FlowsPage() {
       />
       <div className="flex-1 overflow-y-auto px-6 py-4">
 
+      {items.length > 0 && (
+        <div className="relative mb-4">
+          <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={tr('搜索工作流…', 'Search workflows…')}
+            className="w-full rounded-md border border-zinc-800 bg-zinc-950 py-1.5 pl-8 pr-2 text-xs text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-zinc-600"
+          />
+        </div>
+      )}
+
       {creating && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
           <input
@@ -149,9 +168,11 @@ export default function FlowsPage() {
             {tr('还没有工作流。新建一个，把告警处置 / 巡检 / 通知串成自动化。', 'No workflows yet. Create one to automate remediation, inspection, or notification chains.')}
           </div>
         </div>
+      ) : shown.length === 0 ? (
+        <div className="py-16 text-center text-xs text-zinc-500">{tr('无匹配的工作流', 'No matching workflows')}</div>
       ) : (
         <div className="space-y-2">
-          {items.map((f) => (
+          {shown.map((f) => (
             <div
               key={f.id}
               className="flex cursor-pointer items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3 transition-colors hover:border-zinc-700"

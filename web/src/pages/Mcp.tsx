@@ -7,6 +7,7 @@ import {
   PlugZap,
   Plus,
   RefreshCw,
+  Search,
   Server,
   ShieldCheck,
   Trash2,
@@ -65,6 +66,12 @@ export default function McpPage() {
   const [secrets, setSecrets] = useState<SecretView[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const shownServers = servers.filter((s) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return s.name.toLowerCase().includes(q) || (s.endpoint ?? '').toLowerCase().includes(q);
+  });
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   // editor modal: null = closed; { id: null } = create; { id } = edit
@@ -211,17 +218,30 @@ export default function McpPage() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {servers.map((s) => (
-            <ServerRow
-              key={s.id}
-              server={s}
-              test={testState[s.id]}
-              isAdmin={isAdmin}
-              onTest={() => void handleTest(s)}
-              onEdit={() => setEditing({ id: s.id, input: toInput(s) })}
-              onDelete={() => setConfirmDelete(s)}
+          <div className="relative">
+            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={tr('搜索服务（名称 / 端点）…', 'Search servers (name / endpoint)…')}
+              className="w-full rounded-md border border-zinc-800 bg-zinc-950 py-1.5 pl-8 pr-2 text-xs text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-zinc-600"
             />
-          ))}
+          </div>
+          {shownServers.length === 0 ? (
+            <div className="py-10 text-center text-xs text-zinc-500">{tr('无匹配的服务', 'No matching servers')}</div>
+          ) : (
+            shownServers.map((s) => (
+              <ServerRow
+                key={s.id}
+                server={s}
+                test={testState[s.id]}
+                isAdmin={isAdmin}
+                onTest={() => void handleTest(s)}
+                onEdit={() => setEditing({ id: s.id, input: toInput(s) })}
+                onDelete={() => setConfirmDelete(s)}
+              />
+            ))
+          )}
         </div>
       )}
 
