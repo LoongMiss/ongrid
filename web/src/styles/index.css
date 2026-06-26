@@ -430,10 +430,17 @@ html.light *:focus-visible {
    (focus:border-…), so the offset focus ring is redundant and reads as a
    floating outer frame. Drop it on inputs; keep it for buttons/links where the
    ring is the only focus affordance. */
+/* Form controls show focus via their border, never an outline ring. Must win
+   over both Tailwind's focus:outline-none (which is actually a *transparent*
+   2px outline) and the html.light *:focus-visible recolor above — hence
+   !important, else the recolor turns that transparent outline visible. */
+input:focus,
 input:focus-visible,
+textarea:focus,
 textarea:focus-visible,
+select:focus,
 select:focus-visible {
-  outline: none;
+  outline: none !important;
 }
 
 /* Markdown body styling within assistant bubbles */
